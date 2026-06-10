@@ -16,13 +16,14 @@ class Ros2WaveshareBridge(Node):
         super().__init__('ros2_waveshare_bridge')
         
         # Declare Parameters
-        self.declare_parameter('port', '/dev/ttyUSB0')
+        self.declare_parameter('port', '/dev/ttyIMU') # on my pi this is a softlink to /dev/ttyUSB0 or USB1
         self.declare_parameter('baud', 115200)
         self.declare_parameter('urdf_path', '') # Absolute path to your URDF or XACRO file
         
         port = self.get_parameter('port').get_parameter_value().string_value
         baud = self.get_parameter('baud').get_parameter_value().integer_value
         urdf_path = self.get_parameter('urdf_path').get_parameter_value().string_value
+        self.get_logger().info(f"URDF path =: '{urdf_path}'.")
         
         self.joint_map = {}
         self.joint_names = []
