@@ -1,0 +1,32 @@
+<?xml version="1.0"?>
+<robot name="twin_servos">
+
+  <link name="base_link"/>
+  
+  <joint name="joint1" type="revolute">
+    <parent link="base_link"/>
+    <child link="link1"/>
+    <origin xyz="0 0 0.05" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-3.14" upper="3.14" effort="4.5" velocity="6.0"/>
+    <ros2_control name="FeetechServo">
+      <param name="servo_id">1</param>
+    </ros2_control>
+  </joint>
+  
+  <link name="link1"/>
+
+  <joint name="joint2" type="revolute">
+    <parent link="link1"/>
+    <child link="link2"/>
+    <origin xyz="0 0 0.05" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-3.14" upper="3.14" effort="4.5" velocity="6.0"/>
+    <ros2_control name="FeetechServo">
+      <param name="servo_id">2</param>
+    </ros2_control>
+  </joint>
+
+  <link name="link2"/>
+
+</robot>
