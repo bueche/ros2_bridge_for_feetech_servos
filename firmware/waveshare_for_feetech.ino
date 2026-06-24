@@ -59,7 +59,7 @@ void setup() {
   delay(2000); // Complete servo initialization guard window
 
   String foundIDs = "";
-  for (uint8_t id = 1; id <= 2; id++) {
+  for (uint8_t id = 1; id <= 6; id++) {
     if (pingServo(id)) {
       if (foundIDs.length() > 0) foundIDs += ",";
       foundIDs += String(id);
