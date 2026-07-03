@@ -16,7 +16,7 @@ class Ros2WaveshareBridge(Node):
         super().__init__('ros2_waveshare_bridge')
         
         # Declare Parameters
-        self.declare_parameter('port', '/dev/ttyIMU') # on my pi this is a softlink to /dev/ttyUSB0 or USB1
+        self.declare_parameter('port', '/dev/ttyIMU') #  points to USB0 or USB1 etc
         self.declare_parameter('baud', 115200)
         self.declare_parameter('urdf_path', '') # Absolute path to your URDF or XACRO file
         
@@ -171,20 +171,39 @@ class Ros2WaveshareBridge(Node):
                     
                     resp = self.read_exact_bytes(21)
                     if resp and len(resp) == 21 and resp[0] == 0xFF and resp[1] == 0xFF:
-                        ticks = (resp[5] << 8) | resp[6]
-                        load = (resp[9] << 8) | resp[10]
+                        raw_ticks = (resp[5] << 8) | resp[6]
+                        raw_load = (resp[9] << 8) | resp[10]
                         volt = resp[11]
                         temp = resp[12]
-                        current = (resp[18] << 8) | resp[19]
+                        raw_current = (resp[18] << 8) | resp[19]
                         
-                        if current > 32767: current -= 65536
-                        if load > 32767: load -= 65536
+                        # Handle signed 16-bit boundaries for raw positions (multi-turn wraps)
+                        if raw_ticks > 32767:
+                            ticks = raw_ticks - 65536
+                        else:
+                            ticks = raw_ticks
                         
+                        # Handle signed 16-bit boundaries for current telemetry (Converts directly to mA)
+                        if raw_current > 32767: 
+                            raw_current -= 65536
+                        # Calculate raw mA draw, then safely clamp to protect int16 arrays (-32768 to 32767)
+                        current_ma = int(raw_current * 6.5)
+                        current_ma = max(min(current_ma, 32767), -32768)
+                        
+                        # Handle Feetech 10th-bit direction flag for loads (0-1000 CCW / 1024-2024 CW)
+                        if raw_load >= 1024:
+                            load_percent = -(raw_load - 1024) / 10.0
+                        else:
+                            load_percent = raw_load / 10.0
+                        
+                        # Clamp load tracking explicitly to standard integer ranges
+                        load_percent = max(min(int(load_percent), 32767), -32768)
+
                         positions_rad.append(self.waveshare_ticks_to_radians(ticks, servo_id))
                         temps.append(temp)
                         volts.append(volt)
-                        currents.append(current)
-                        loads.append(int(load / 10))
+                        currents.append(current_ma)
+                        loads.append(int(load_percent))
                         success_count += 1
                     else:
                         feetech_msg.comm_state = FeetechState.COMM_STATE_ITEM_READ_FAIL
@@ -198,7 +217,7 @@ class Ros2WaveshareBridge(Node):
         if success_count == len(self.active_ids):
             joint_msg.position = positions_rad
             joint_msg.velocity = [0.0] * len(self.joint_names)
-            joint_msg.effort = [0.0] * len(self.joint_names)
+            joint_msg.effort = [float(l) for l in loads] # Map signed efforts cleanly to standard joint state vectors
             self.joint_state_pub.publish(joint_msg)
 
         feetech_msg.present_temperature = temps
