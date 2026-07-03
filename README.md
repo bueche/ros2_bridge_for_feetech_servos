@@ -5,6 +5,8 @@ The following repository has a bare-bones ros2 bridge for the waveshare controll
 
 It takes a different approach that is perhaps a little less tempermental with the underlying hardware as it is 100% python based. This means it will give up a little on latency but should be quite sufficient for most applications (e.g., https://github.com/bueche/ros2_robot_arm).
 
+This will be more thoroughly tested in the next few weeks. Log any issues you find.
+
 ## Features
 TBD
 
