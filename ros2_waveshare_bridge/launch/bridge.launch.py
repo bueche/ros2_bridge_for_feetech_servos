@@ -18,7 +18,8 @@ def generate_launch_description():
         parameters=[{
             'port': '/dev/ttyIMU', # on my PI this is a soft link to /dev/ttyUSB0 or /dev/ttyUSB1
             'baud': 115200,
-            'urdf_path': urdf_file_path  # The single dynamic source of truth parameter
+            'urdf_path': urdf_file_path,  # The single dynamic source of truth parameter
+            'joint_config_file': PathJoinSubstitution([FindPackageShare("ros2_waveshare_bridge"), "config", "so-arm101.yaml"])
         }]
     )
 

@@ -9,6 +9,7 @@ import threading
 import time
 import math
 import os
+import yaml
 import xml.etree.ElementTree as ET
 
 class Ros2WaveshareBridge(Node):
@@ -16,34 +17,44 @@ class Ros2WaveshareBridge(Node):
         super().__init__('ros2_waveshare_bridge')
         
         # Declare Parameters
-        self.declare_parameter('port', '/dev/ttyIMU') #  points to USB0 or USB1 etc
+        self.declare_parameter('port', '/dev/ttyIMU') # local should be soft link to USB0 or USB1..etc
         self.declare_parameter('baud', 115200)
-        self.declare_parameter('urdf_path', '') # Absolute path to your URDF or XACRO file
+        self.declare_parameter('urdf_path', '')
+        self.declare_parameter('joint_config_file', '') # Path to the optional YAML configuration file
         
         port = self.get_parameter('port').get_parameter_value().string_value
         baud = self.get_parameter('baud').get_parameter_value().integer_value
         urdf_path = self.get_parameter('urdf_path').get_parameter_value().string_value
-        self.get_logger().info(f"URDF path =: '{urdf_path}'.")
+        yaml_path = self.get_parameter('joint_config_file').get_parameter_value().string_value
         
         self.joint_map = {}
         self.joint_names = []
         self.active_ids = []
+        self.servo_configs = {} # Structured storage for runtime calibration parameters
 
-        # Autonomously Parse URDF Target Layout
+        # 1. Parse URDF base configuration rules
         if urdf_path and os.path.exists(urdf_path):
             self.parse_urdf_file(urdf_path)
         else:
             self.get_logger().error(f"URDF path missing or invalid: '{urdf_path}'. Waiting for configuration.")
             return
 
+        # 2. Layer YAML modifications over the top if available
+        if yaml_path and os.path.exists(yaml_path):
+            self.parse_yaml_file(yaml_path)
+
+        # Connect to Hardware Link
         try:
             self.ser = serial.Serial(port=port, baudrate=baud, timeout=0.03, rtscts=False, dsrdtr=False)
-            self.get_logger().info(f"Dynamic Bridge Active. Operating {len(self.joint_names)} joints at {baud} baud.")
+            self.get_logger().info(f"Dynamic Bridge Active. Operating {len(self.joint_names)} joints via {port} at {baud} baud.")
         except Exception as e:
-            self.get_logger().error(f"Failed to open port: {e}")
+            self.get_logger().error(f"Failed to open port {port}: {e}")
             return
 
         self.serial_lock = threading.Lock()
+
+        # 3. Flash runtime calibration parameters to active servos on boot
+        self.apply_servo_calibrations()
 
         # Publishers & Subscribers
         self.trajectory_sub = self.create_subscription(
@@ -54,46 +65,127 @@ class Ros2WaveshareBridge(Node):
         
         self.telemetry_timer = self.create_timer(0.25, self.query_telemetry_callback)
 
+
     def parse_urdf_file(self, path):
-        """ Parses a local URDF file completely automatically to extract joints and embedded IDs """
+        """ Robust parser that matches both plain nested-tag URDF layouts and standard ros2_control parent containers """
         try:
             tree = ET.parse(path)
             root = tree.getroot()
             
-            for joint in root.findall('joint'):
+            # Find every single joint element anywhere in the document
+            for joint in root.findall('.//joint') + root.findall('joint'):
                 j_name = joint.get('name')
                 j_type = joint.get('type')
                 
-                # Only target active moving joints
-                if j_type in ['revolute', 'continuous']:
-                    servo_id = None
+                # Filter out none types, but keep active or unspecified control joints
+                if not j_name or j_type == 'fixed':
+                    continue
                     
-                    # Search inside the joint for custom ros2_control hardware configurations
-                    r2c = joint.find('ros2_control')
-                    if r2c is not None:
-                        for param in r2c.findall('param'):
-                            if param.get('name') == 'servo_id':
-                                servo_id = int(param.text.strip())
-                                break
+                clean_name = j_name.replace('${prefix}', '').replace('_joint', '')
+                servo_id = None
+                params = {}
+                
+                # Gather all parameters inside this joint element or any nested sub-elements
+                # This catches both <param> directly in <joint> and <param> inside a nested <ros2_control>
+                for param in joint.findall('.//param') + joint.findall('param'):
+                    p_name = param.get('name')
+                    p_val = param.text.strip() if param.text else ""
+                    if p_name:
+                        params[p_name] = p_val
+                
+                # Check for ID under either common naming convention
+                if 'servo_id' in params:
+                    servo_id = int(params['servo_id'])
+                elif 'id' in params:
+                    servo_id = int(params['id'])
                     
-                    # Fallback to look everywhere inside the joint tag elements
-                    if servo_id is None:
-                        for elem in joint.iter('param'):
-                            if elem.get('name') == 'servo_id':
-                                servo_id = int(elem.text.strip())
-                                break
-                                
-                    if servo_id is not None:
-                        self.joint_map[j_name] = servo_id
-                        self.joint_names.append(j_name)
+                if servo_id is not None:
+                    self.joint_map[clean_name] = servo_id
+                    if clean_name not in self.joint_names:
+                        self.joint_names.append(clean_name)
                         self.active_ids.append(servo_id)
-                        self.get_logger().info(f"Autonomously Mapped URDF Joint '{j_name}' to Servo ID {servo_id}")
+                    
+                    # Compute baseline defaults from either URDF variant
+                    offset_val = int(params.get('offset', 2048))
+                    homing_offset = int(params.get('homing_offset', offset_val - 2048))
+                    
+                    self.servo_configs[servo_id] = {
+                        'homing_offset': homing_offset,
+                        'p_coefficient': int(params.get('p_coefficient', params.get('p_cofficient', 16))),
+                        'i_coefficient': int(params.get('i_coefficient', 0)),
+                        'd_coefficient': int(params.get('d_coefficient', 32))
+                    }
+                    self.get_logger().info(f"Autonomously Mapped Joint '{clean_name}' to Servo ID {servo_id}")
             
             if not self.joint_map:
-                self.get_logger().warn("URDF parsed successfully, but no joints with a <param name='servo_id'> were discovered.")
+                self.get_logger().warn("URDF parsed, but no joints containing an 'id' or 'servo_id' parameter were discovered.")
                 
         except Exception as e:
-            self.get_logger().error(f"Failed to automatically parse URDF file: {e}")
+            self.get_logger().error(f"Error parsing URDF elements: {e}")
+    def parse_yaml_file(self, path):
+        """ Merges ecosystem parameters directly out of standard LeRobot / Feetech driver YAML files """
+        try:
+            with open(path, 'r') as f:
+                config = yaml.safe_load(f)
+                
+            if 'joints' in config:
+                for j_name, data in config['joints'].items():
+                    clean_name = j_name.replace('_joint', '')
+                    if clean_name in self.joint_map:
+                        servo_id = self.joint_map[clean_name]
+                        
+                        # Read configuration keys into tracking dictionary structures
+                        for key in ['homing_offset', 'p_coefficient', 'i_coefficient', 'd_coefficient', 
+                                    'acceleration', 'return_delay_time', 'max_torque_limit']:
+                            if key in data:
+                                self.servo_configs[servo_id][key] = int(data[key])
+                                
+                        self.get_logger().info(f"Merged YAML adjustments over Joint '{clean_name}' (ID: {servo_id})")
+        except Exception as e:
+            self.get_logger().error(f"Failed to process YAML file configuration adjustments: {e}")
+
+    def write_register(self, servo_id, reg_address, value, num_bytes=1):
+        """ Helper utility to format and transmit standard WRITE packets down the serial lines """
+        packet = bytearray([0xFF, 0xFF, servo_id])
+        length = 4 + num_bytes
+        packet.append(length)
+        packet.append(0x03) # WRITE Command
+        packet.append(reg_address)
+        
+        if num_bytes == 1:
+            packet.append(value & 0xFF)
+        else:
+            packet.append((value >> 8) & 0xFF)
+            packet.append(value & 0xFF)
+            
+        packet.append((~sum(packet[2:])) & 0xFF)
+        self.ser.write(packet)
+        time.sleep(0.002)
+
+    def apply_servo_calibrations(self):
+        """ Flashes calibration settings sequentially to the hardware registers on boot """
+        with self.serial_lock:
+            self.get_logger().info("Initializing hardware calibration parameters...")
+            for servo_id, cfg in self.servo_configs.items():
+                try:
+                    # Unlock EEPROM (Register 55 = 0)
+                    self.write_register(servo_id, 55, 0, 1)
+                    
+                    # Write PID Metrics
+                    if 'p_coefficient' in cfg: self.write_register(servo_id, 21, cfg['p_coefficient'], 1)
+                    if 'i_coefficient' in cfg: self.write_register(servo_id, 22, cfg['i_coefficient'], 1)
+                    if 'd_coefficient' in cfg: self.write_register(servo_id, 23, cfg['d_coefficient'], 1)
+                    
+                    # Write Acceleration limits if applicable
+                    if 'acceleration' in cfg: self.write_register(servo_id, 41, cfg['acceleration'], 1)
+                    if 'return_delay_time' in cfg: self.write_register(servo_id, 5, cfg['return_delay_time'], 1)
+                    
+                    # Relock EEPROM protection (Register 55 = 1)
+                    self.write_register(servo_id, 55, 1, 1)
+                    
+                except Exception as e:
+                    self.get_logger().error(f"Could not write calibration sequence properties to Servo {servo_id}: {e}")
+            self.get_logger().info("Hardware target configuration initialization cycle complete.")
 
     def calculate_checksum(self, packet_bytes):
         return (~sum(packet_bytes[2:])) & 0xFF
@@ -120,14 +212,15 @@ class Ros2WaveshareBridge(Node):
         return (ticks - 2048) * (math.pi / 2048.0)
 
     def trajectory_callback(self, msg):
-        if not msg.points:
+        if not msg.points or not hasattr(self, 'ser') or not self.ser.is_open:
             return
         target_point = msg.points[-1]
         
         with self.serial_lock:
-            for index, joint_name in enumerate(msg.joint_names):
-                if joint_name in self.joint_map:
-                    servo_id = self.joint_map[joint_name]
+            for index, j_name in enumerate(msg.joint_names):
+                clean_name = j_name.replace('_joint', '')
+                if clean_name in self.joint_map:
+                    servo_id = self.joint_map[clean_name]
                     pos_ticks = self.radians_to_ticks(target_point.positions[index], servo_id)
                     
                     val_h = (pos_ticks >> 8) & 0xFF
@@ -137,11 +230,12 @@ class Ros2WaveshareBridge(Node):
                     packet.append(self.calculate_checksum(packet))
                     try:
                         self.ser.write(packet)
+                        time.sleep(0.001)
                     except Exception as e:
-                        self.get_logger().error(f"Write error: {e}")
+                        self.get_logger().error(f"Write error on target servo command thread {servo_id}: {e}")
 
     def query_telemetry_callback(self):
-        if not self.joint_names:
+        if not self.joint_names or not hasattr(self, 'ser') or not self.ser.is_open:
             return
         now = self.get_clock().now().to_msg()
         
@@ -177,47 +271,36 @@ class Ros2WaveshareBridge(Node):
                         temp = resp[12]
                         raw_current = (resp[18] << 8) | resp[19]
                         
-                        # Handle signed 16-bit boundaries for raw positions (multi-turn wraps)
                         if raw_ticks > 32767:
                             ticks = raw_ticks - 65536
                         else:
                             ticks = raw_ticks
                         
-                        # Handle signed 16-bit boundaries for current telemetry (Converts directly to mA)
                         if raw_current > 32767: 
                             raw_current -= 65536
-                        # Calculate raw mA draw, then safely clamp to protect int16 arrays (-32768 to 32767)
-                        current_ma = int(raw_current * 6.5)
-                        current_ma = max(min(current_ma, 32767), -32768)
+                        current_ma = max(min(int(raw_current * 6.5), 32767), -32768)
                         
-                        # Handle Feetech 10th-bit direction flag for loads (0-1000 CCW / 1024-2024 CW)
                         if raw_load >= 1024:
                             load_percent = -(raw_load - 1024) / 10.0
                         else:
                             load_percent = raw_load / 10.0
-                        
-                        # Clamp load tracking explicitly to standard integer ranges
                         load_percent = max(min(int(load_percent), 32767), -32768)
-
+                        
                         positions_rad.append(self.waveshare_ticks_to_radians(ticks, servo_id))
                         temps.append(temp)
                         volts.append(volt)
                         currents.append(current_ma)
-                        loads.append(int(load_percent))
+                        loads.append(load_percent)
                         success_count += 1
                     else:
-                        feetech_msg.comm_state = FeetechState.COMM_STATE_ITEM_READ_FAIL
-                        positions_rad.append(0.0)
-                        temps.append(0); volts.append(0); currents.append(0); loads.append(0)
+                        success_count -= 1
                 except Exception:
-                    feetech_msg.comm_state = FeetechState.COMM_STATE_ITEM_READ_FAIL
-                    positions_rad.append(0.0)
-                    temps.append(0); volts.append(0); currents.append(0); loads.append(0)
+                    success_count -= 1
 
         if success_count == len(self.active_ids):
             joint_msg.position = positions_rad
             joint_msg.velocity = [0.0] * len(self.joint_names)
-            joint_msg.effort = [float(l) for l in loads] # Map signed efforts cleanly to standard joint state vectors
+            joint_msg.effort = [float(l) for l in loads]
             self.joint_state_pub.publish(joint_msg)
 
         feetech_msg.present_temperature = temps
