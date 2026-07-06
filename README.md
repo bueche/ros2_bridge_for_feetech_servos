@@ -8,7 +8,10 @@ It takes a different approach that is perhaps a little less tempermental with th
 This will be more thoroughly tested in the next few weeks. Log any issues you find.
 
 ## Features
-TBD
+1. Able to set the positions of the servos using radians using joint trajectory topic. Compatible with the Dynamixel servos on ros2 control. Note that ros2_control should ***not** be running.
+2. Able to collect positions of the servos using the joint state topic. also compatible with Dynamixel servos and control integration. 
+3. Able to collect advanced servo state that is compatible with the dynamixel servos for temperature, current, voltage, and load. This includes Dynamixel approach to direction (e.g. negaative current and load)
+4. able to set internal Feetech PID tuning values in a manner that is compatible with the `feetech_ros2_driver`.
 
 ## Contents
 The contents of this repository include:
@@ -142,11 +145,11 @@ present_load:
 - 0
 - 0
 ---
-~/waveshare_jazzy_ws/src$ ros2 topic echo /joint_states --once
+~/waveshare_jazzy_ws$ ros2 topic echo /joint_states --once
 header:
   stamp:
-    sec: 1783120340
-    nanosec: 80937353
+    sec: 1783374520
+    nanosec: 641264517
   frame_id: ''
 name:
 - shoulder_pan
@@ -157,11 +160,11 @@ name:
 - gripper
 position:
 - 1.1780972450961724
-- 2.356194490192345
-- 86.79570094014535
-- 2.748893571891069
-- -2.356194490192345
-- -96.62698380970443
+- 0.39269908169872414
+- 1.5707963267948966
+- 1.1780972450961724
+- -0.39269908169872414
+- -1.1780972450961724
 velocity:
 - 0.0
 - 0.0
@@ -177,7 +180,5 @@ effort:
 - 0.0
 - 0.0
 ---
-
-
 ```
 
