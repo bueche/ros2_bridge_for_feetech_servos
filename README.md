@@ -1,4 +1,4 @@
-# ROS2 Bridge for Waveshare controller and Feetech Servos
+# ROS2 Bridge for Waveshare controller and Feetech/Waveshare Servos
 
 ## Summary
 The following repository has a bare-bones ros2 bridge for the waveshare controller and feetech servos. This is a replacement repository for the [feetech_ros2_driver](https://github.com/ros-physical-ai/feetech_ros2_driver) for those of us who could not get it working (see [here](https://github.com/ros-physical-ai/feetech_ros2_driver/issues/29)). 
