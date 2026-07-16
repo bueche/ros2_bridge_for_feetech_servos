@@ -62,6 +62,19 @@ def test_decoupled_alignment_matrix():
         # (5) Test Position Alignment
         data_p_center = node.decode_telemetry_packet(make_mock_response(ticks=2048), servo_id)
         assert data_p_center['position'] == 0.0
+
+        # (6) CRITICAL NEW TEST: Test Multi-turn Overflow Protection
+        # Raw ticks = 6144 (which is exactly 1 full rotation of 4096 + 2048 center offset)
+        # This must cleanly wrap back to exactly 0.0 radians
+        data_p_overflow = node.decode_telemetry_packet(make_mock_response(ticks=6144), servo_id)
+        assert data_p_overflow['position'] == 0.0
+
+        # Test Negative Multi-turn wrap
+        # Raw ticks = -2048 (should resolve to 2048 after modulo, resulting in 0.0 radians)
+        # Since raw_ticks is read as unsigned 16-bit: -2048 maps to 63488
+        data_p_neg_overflow = node.decode_telemetry_packet(make_mock_response(ticks=63488), servo_id)
+        assert data_p_neg_overflow['position'] == 0.0
+
     finally:
         # Cleanly tear down the context pool
         node.destroy_node()
