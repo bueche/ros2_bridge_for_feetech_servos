@@ -174,22 +174,37 @@ class Ros2WaveshareBridge(Node):
         time.sleep(0.002)
 
     def read_register(self, servo_id, reg_address, num_bytes=1):
-        """ Helper utility to poll absolute hardware parameters before driving modifications """
+        """ Helper utility to poll absolute hardware parameters with strict header sync """
         packet = bytearray([0xFF, 0xFF, servo_id, 0x04, 0x02, reg_address, num_bytes])
         packet.append(self.calculate_checksum(packet))
+        
         try:
-            self.ser.reset_input_buffer()
-            self.ser.write(packet)
-            expected_len = 6 + num_bytes
-            resp = self.read_exact_bytes(expected_len)
-            
-            if len(resp) == expected_len and resp[0] == 0xFF and resp[1] == 0xFF and resp[4] == 0:
-                if num_bytes == 1:
-                    return resp[5]
-                else:
-                    return (resp[5] << 8) | resp[6]
-        except Exception:
-            pass
+            with self.serial_lock:
+                self.ser.reset_input_buffer()
+                self.ser.write(packet)
+                
+                # Expected: 2 Header bytes + 1 ID + 1 Length + 1 Error + data bytes + 1 Checksum
+                expected_len = 6 + num_bytes
+                resp = self.read_exact_bytes(expected_len)
+                
+                # Check for shifted frames by searching for the sync header
+                if len(resp) >= expected_len:
+                    # If it's not aligned at the start, try to find the 0xFF 0xFF alignment window
+                    if not (resp[0] == 0xFF and resp[1] == 0xFF):
+                        idx = resp.find(b'\xff\xff')
+                        if idx != -1:
+                            # Re-read missing trailing bytes to complete the frame window
+                            remainder = self.read_exact_bytes(idx)
+                            resp = resp[idx:] + remainder
+                    
+                    # Process aligned frame
+                    if len(resp) >= expected_len and resp[0] == 0xFF and resp[1] == 0xFF and resp[4] == 0:
+                        if num_bytes == 1:
+                            return resp[5]
+                        else:
+                            return (resp[5] << 8) | resp[6]
+        except Exception as e:
+            self.get_logger().error(f"Read register error on ID {servo_id}: {e}")
         return None
 
     def apply_servo_calibrations(self):
