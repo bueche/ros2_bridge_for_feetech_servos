@@ -187,7 +187,7 @@ class Ros2WaveshareBridge(Node):
                     # Handle signed 16-bit bounds
                     if offset < 0:
                         offset += 65536
-                    self.write_register(servo_id, 5, offset, 2)
+                    self.write_register(servo_id, 31, offset, 2)
                 
                 # Write PID Metrics
                 if 'p_coefficient' in cfg: self.write_register(servo_id, 21, cfg['p_coefficient'], 1)
@@ -196,7 +196,7 @@ class Ros2WaveshareBridge(Node):
                 
                 # Write Acceleration limits if applicable
                 if 'acceleration' in cfg: self.write_register(servo_id, 41, cfg['acceleration'], 1)
-                if 'return_delay_time' in cfg: self.write_register(servo_id, 5, cfg['return_delay_time'], 1)
+                if 'return_delay_time' in cfg: self.write_register(servo_id, 7, cfg['return_delay_time'], 1)
                 
                 # Relock EEPROM protection (Register 55 = 1)
                 self.write_register(servo_id, 55, 1, 1)
