@@ -173,37 +173,83 @@ class Ros2WaveshareBridge(Node):
         self.ser.write(packet)
         time.sleep(0.002)
 
+    def read_register(self, servo_id, reg_address, num_bytes=1):
+        """ Helper utility to poll absolute hardware parameters before driving modifications """
+        packet = bytearray([0xFF, 0xFF, servo_id, 0x04, 0x02, reg_address, num_bytes])
+        packet.append(self.calculate_checksum(packet))
+        try:
+            self.ser.reset_input_buffer()
+            self.ser.write(packet)
+            expected_len = 6 + num_bytes
+            resp = self.read_exact_bytes(expected_len)
+            
+            if len(resp) == expected_len and resp[0] == 0xFF and resp[1] == 0xFF and resp[4] == 0:
+                if num_bytes == 1:
+                    return resp[5]
+                else:
+                    return (resp[5] << 8) | resp[6]
+        except Exception:
+            pass
+        return None
+
     def apply_servo_calibrations(self):
-        """ Flashes calibration settings sequentially to the hardware registers on boot """
-        self.get_logger().info("Initializing hardware calibration parameters...")
+        """ Read and compare calibration settings before flashing to prevent redundant writes and detect dirty states """
+        self.get_logger().info("Checking hardware calibration state against target configuration...")
+        dirty_eeprom_detected = False
+        
         for servo_id, cfg in self.servo_configs.items():
             try:
-                # Unlock EEPROM (Register 55 = 0)
-                self.write_register(servo_id, 55, 0, 1)
-                
-                # Write Homing Offset (Registers 5 & 6, signed 16-bit)
+                def verify_and_flash(reg, target_val, num_bytes, name, is_eeprom=True):
+                    nonlocal dirty_eeprom_detected
+                    current_val = self.read_register(servo_id, reg, num_bytes)
+                    
+                    if current_val is None:
+                        self.get_logger().error(f"Servo {servo_id}: Link timed out trying to query register {reg} ({name}).")
+                        return
+
+                    if current_val != target_val:
+                        self.get_logger().warn(
+                            f"Servo {servo_id} {name} MISMATCH! Hardware: {current_val}, Config Target: {target_val}. Flashing register..."
+                        )
+                        if is_eeprom:
+                            self.write_register(servo_id, 55, 0, 1) # Unlock
+                            
+                        self.write_register(servo_id, reg, target_val, num_bytes)
+                        
+                        if is_eeprom:
+                            self.write_register(servo_id, 55, 1, 1) # Lock
+                            dirty_eeprom_detected = True
+                    else:
+                        self.get_logger().info(f"Servo {servo_id} {name} matches hardware ({current_val}).")
+
+                # 1. Homing Offset Validation (Register 31, 2-byte signed storage bounds)
                 if 'homing_offset' in cfg:
                     offset = cfg['homing_offset']
-                    # Handle signed 16-bit bounds
                     if offset < 0:
                         offset += 65536
-                    self.write_register(servo_id, 31, offset, 2)
+                    verify_and_flash(31, offset, 2, "Homing Offset")
                 
-                # Write PID Metrics
-                if 'p_coefficient' in cfg: self.write_register(servo_id, 21, cfg['p_coefficient'], 1)
-                if 'i_coefficient' in cfg: self.write_register(servo_id, 22, cfg['i_coefficient'], 1)
-                if 'd_coefficient' in cfg: self.write_register(servo_id, 23, cfg['d_coefficient'], 1)
+                # 2. Control Loop PID Parameter Verification
+                if 'p_coefficient' in cfg: verify_and_flash(21, cfg['p_coefficient'], 1, "P Gain")
+                if 'i_coefficient' in cfg: verify_and_flash(22, cfg['i_coefficient'], 1, "I Gain")
+                if 'd_coefficient' in cfg: verify_and_flash(23, cfg['d_coefficient'], 1, "D Gain")
                 
-                # Write Acceleration limits if applicable
-                if 'acceleration' in cfg: self.write_register(servo_id, 41, cfg['acceleration'], 1)
-                if 'return_delay_time' in cfg: self.write_register(servo_id, 7, cfg['return_delay_time'], 1)
-                
-                # Relock EEPROM protection (Register 55 = 1)
-                self.write_register(servo_id, 55, 1, 1)
+                # 3. Dynamic Operating Modifiers
+                if 'return_delay_time' in cfg: verify_and_flash(7, cfg['return_delay_time'], 1, "Return Delay")
+                if 'acceleration' in cfg:     verify_and_flash(41, cfg['acceleration'], 1, "Acceleration", is_eeprom=False)
                 
             except Exception as e:
-                self.get_logger().error(f"Could not write calibration sequence properties to Servo {servo_id}: {e}")
-        self.get_logger().info("Hardware target configuration initialization cycle complete.")
+                self.get_logger().error(f"Could not complete validation matrix on Servo {servo_id}: {e}")
+
+        if dirty_eeprom_detected:
+            self.get_logger().error("=" * 85)
+            self.get_logger().error("  CRITICAL HARDWARE MISMATCH DETECTED: NEW CALIBRATIONS HAVE BEEN FLASHED!")
+            self.get_logger().error("  THE NEW POSITION OFFSETS WILL NOT TAKE EFFECT UNTIL THE ENTIRE BUS REBOOTS.")
+            self.get_logger().error("  ")
+            self.get_logger().error("  --> ACTION: UNPLUG THE 12V POWER SUPPLY FROM THE ROBOT FOR 15 SECONDS NOW <--")
+            self.get_logger().error("=" * 85)
+        else:
+            self.get_logger().info("All active servo parameters match your YAML. Robot coordinate loop synchronized.")
 
     def read_exact_bytes(self, num_bytes):
         buffer = bytearray()
@@ -237,10 +283,9 @@ class Ros2WaveshareBridge(Node):
         temp = resp[12]
         raw_current = (resp[18] << 8) | resp[19]
 
-        # 1. Position Alignment (Normalize to single-turn 0-4095 ticks, then handle signed 12-bit)
-        # Discard multi-turn accumulated rotations
+        # 1. Position Alignment (Normalize to single-turn 0-4095 ticks)
         single_turn_ticks = raw_ticks % 4096
-        position_rad = self.waveshare_ticks_to_radians(ticks, servo_id)
+        position_rad = self.waveshare_ticks_to_radians(single_turn_ticks, servo_id)
 
         # 2. Temperature Alignment (1:1 Degrees C)
         temperature = float(temp)
@@ -285,6 +330,7 @@ class Ros2WaveshareBridge(Node):
     def query_telemetry_callback(self):
         if not self.joint_names or not self.ser or not self.ser.is_open:
             return
+
         now = self.get_clock().now().to_msg()
         
         feetech_msg = FeetechState()
