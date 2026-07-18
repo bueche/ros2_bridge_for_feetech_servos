@@ -258,13 +258,16 @@ class Ros2WaveshareBridge(Node):
                         )
                         if target_mem_is_eeprom:
                             self.write_register(servo_id, 55, 0, 1, is_eeprom=False) # Unlock RAM register 55
-                            
+                            time.sleep(0.01) # <-- CRITICAL: Wait for unlock flag to propagate                           
                         # Pass the explicit boolean flag to the write call
                         self.write_register(servo_id, reg, target_val, num_bytes, is_eeprom=target_mem_is_eeprom)
-                        
+                        time.sleep(0.01) # <-- CRITICAL: Wait for unlock flag to propagate                           
+
                         if target_mem_is_eeprom:
                             self.write_register(servo_id, 55, 1, 1, is_eeprom=False) # Lock RAM register 55
                             dirty_eeprom_detected = True
+                            time.sleep(0.01) # <-- CRITICAL: Wait for unlock flag to propagate                           
+
                     else:
                         self.get_logger().info(f"Servo {servo_id} {name} matches hardware ({current_val}).")
 
