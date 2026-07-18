@@ -235,6 +235,7 @@ class Ros2WaveshareBridge(Node):
         except Exception as e:
             self.get_logger().error(f"Read register exception on ID {servo_id}: {e}")
         return None
+    
     def apply_servo_calibrations(self):
         """ Read and compare calibration settings before flashing to prevent redundant writes and detect dirty states """
         self.get_logger().info("Checking hardware calibration state against target configuration...")
@@ -242,7 +243,7 @@ class Ros2WaveshareBridge(Node):
         
         for servo_id, cfg in self.servo_configs.items():
             try:
-                def verify_and_flash(reg, target_val, num_bytes, name, is_eeprom=True):
+                def verify_and_flash(reg, target_val, num_bytes, name, target_mem_is_eeprom=True):
                     nonlocal dirty_eeprom_detected
                     current_val = self.read_register(servo_id, reg, num_bytes)
                     
@@ -254,13 +255,14 @@ class Ros2WaveshareBridge(Node):
                         self.get_logger().warn(
                             f"Servo {servo_id} {name} MISMATCH! Hardware: {current_val}, Config Target: {target_val}. Flashing register..."
                         )
-                        if is_eeprom:
-                            self.write_register(servo_id, 55, 0, 1) # Unlock
+                        if target_mem_is_eeprom:
+                            self.write_register(servo_id, 55, 0, 1, is_eeprom=False) # Unlock RAM register 55
                             
-                        self.write_register(servo_id, reg, target_val, num_bytes, is_eeprom=is_eeprom)
+                        # Pass the explicit boolean flag to the write call
+                        self.write_register(servo_id, reg, target_val, num_bytes, is_eeprom=target_mem_is_eeprom)
                         
-                        if is_eeprom:
-                            self.write_register(servo_id, 55, 1, 1) # Lock
+                        if target_mem_is_eeprom:
+                            self.write_register(servo_id, 55, 1, 1, is_eeprom=False) # Lock RAM register 55
                             dirty_eeprom_detected = True
                     else:
                         self.get_logger().info(f"Servo {servo_id} {name} matches hardware ({current_val}).")
@@ -270,22 +272,22 @@ class Ros2WaveshareBridge(Node):
                     offset = cfg['homing_offset']
                     if offset < 0:
                         offset += 65536
-                    verify_and_flash(31, offset, 2, "Homing Offset")
+                    verify_and_flash(31, offset, 2, "Homing Offset", target_mem_is_eeprom=True)
                 
                 # 2. Angle Range Limits (Min: Register 9, Max: Register 11)
                 if 'range_min' in cfg:
-                   verify_and_flash(9, cfg['range_min'], 2, "Min Angle Limit")
+                    verify_and_flash(9, cfg['range_min'], 2, "Min Angle Limit", target_mem_is_eeprom=True)
                 if 'range_max' in cfg:
-                   verify_and_flash(11, cfg['range_max'], 2, "Max Angle Limit")
-
-                # 3. Control Loop PID Parameter Verification
-                if 'p_coefficient' in cfg: verify_and_flash(21, cfg['p_coefficient'], 1, "P Gain")
-                if 'i_coefficient' in cfg: verify_and_flash(22, cfg['i_coefficient'], 1, "I Gain")
-                if 'd_coefficient' in cfg: verify_and_flash(23, cfg['d_coefficient'], 1, "D Gain")
+                    verify_and_flash(11, cfg['range_max'], 2, "Max Angle Limit", target_mem_is_eeprom=True)
                 
-                # 4. Dynamic Operating Modifiers
-                if 'return_delay_time' in cfg: verify_and_flash(7, cfg['return_delay_time'], 1, "Return Delay")
-                if 'acceleration' in cfg:     verify_and_flash(41, cfg['acceleration'], 1, "Acceleration", is_eeprom=False)
+                # 3. Control Loop PID Parameter Verification
+                if 'p_coefficient' in cfg: verify_and_flash(21, cfg['p_coefficient'], 1, "P Gain", target_mem_is_eeprom=True)
+                if 'i_coefficient' in cfg: verify_and_flash(22, cfg['i_coefficient'], 1, "I Gain", target_mem_is_eeprom=True)
+                if 'd_coefficient' in cfg: verify_and_flash(23, cfg['d_coefficient'], 1, "D Gain", target_mem_is_eeprom=True)
+                
+                # 4. Dynamic Operating Modifiers (Acceleration is RAM-only)
+                if 'return_delay_time' in cfg: verify_and_flash(7, cfg['return_delay_time'], 1, "Return Delay", target_mem_is_eeprom=True)
+                if 'acceleration' in cfg:     verify_and_flash(41, cfg['acceleration'], 1, "Acceleration", target_mem_is_eeprom=False)
                 
             except Exception as e:
                 self.get_logger().error(f"Could not complete validation matrix on Servo {servo_id}: {e}")
