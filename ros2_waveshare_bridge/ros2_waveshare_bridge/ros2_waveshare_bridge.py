@@ -156,11 +156,12 @@ class Ros2WaveshareBridge(Node):
     def calculate_checksum(self, packet_bytes):
         return (~sum(packet_bytes[2:])) & 0xFF
 
-    def write_register(self, servo_id, reg_address, value, num_bytes=1):
+    def write_register(self, servo_id, reg_address, value, num_bytes=1, is_eeprom=True):
         """ Helper utility to format and transmit standard WRITE packets down the serial lines """
         packet = bytearray([0xFF, 0xFF, servo_id])
         length = 4 + num_bytes
         packet.append(length)
+        
         # Use 0x02 (WRITE DATA) for EEPROM, 0x03 (WRITE TIME) for volatile RAM
         cmd = 0x02 if is_eeprom else 0x03
         packet.append(cmd)
