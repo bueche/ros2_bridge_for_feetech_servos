@@ -48,6 +48,7 @@ class Ros2WaveshareBridge(Node):
         else:
             self.get_logger().warn(f"No calibration YAML path provided or file missing. Operating on raw parameters. {yaml_path}")
 
+        self.serial_lock = threading.Lock()
         self.ser = None
         if init_serial:
             try:
@@ -160,53 +161,80 @@ class Ros2WaveshareBridge(Node):
         packet = bytearray([0xFF, 0xFF, servo_id])
         length = 4 + num_bytes
         packet.append(length)
-        packet.append(0x03) # WRITE Command
+        # Use 0x02 (WRITE DATA) for EEPROM, 0x03 (WRITE TIME) for volatile RAM
+        cmd = 0x02 if is_eeprom else 0x03
+        packet.append(cmd)
         packet.append(reg_address)
         
         if num_bytes == 1:
             packet.append(value & 0xFF)
         else:
-            packet.append((value >> 8) & 0xFF)
+            # Feetech hardware is Little-Endian: Low byte, then High byte
             packet.append(value & 0xFF)
+            packet.append((value >> 8) & 0xFF)
             
         packet.append(self.calculate_checksum(packet))
         self.ser.write(packet)
         time.sleep(0.002)
 
+
     def read_register(self, servo_id, reg_address, num_bytes=1):
-        """ Helper utility to poll absolute hardware parameters with strict header sync """
+        """ Helper utility to poll hardware parameters with verbose diagnostic logging """
         packet = bytearray([0xFF, 0xFF, servo_id, 0x04, 0x02, reg_address, num_bytes])
         packet.append(self.calculate_checksum(packet))
+        
+        expected_length_field = 2 + num_bytes
+        expected_len = 6 + num_bytes
         
         try:
             with self.serial_lock:
                 self.ser.reset_input_buffer()
                 self.ser.write(packet)
                 
-                # Expected: 2 Header bytes + 1 ID + 1 Length + 1 Error + data bytes + 1 Checksum
-                expected_len = 6 + num_bytes
-                resp = self.read_exact_bytes(expected_len)
+                # Read response plus an extra buffer window
+                resp = self.read_exact_bytes(expected_len + 30)
                 
-                # Check for shifted frames by searching for the sync header
-                if len(resp) >= expected_len:
-                    # If it's not aligned at the start, try to find the 0xFF 0xFF alignment window
-                    if not (resp[0] == 0xFF and resp[1] == 0xFF):
-                        idx = resp.find(b'\xff\xff')
-                        if idx != -1:
-                            # Re-read missing trailing bytes to complete the frame window
-                            remainder = self.read_exact_bytes(idx)
-                            resp = resp[idx:] + remainder
-                    
-                    # Process aligned frame
-                    if len(resp) >= expected_len and resp[0] == 0xFF and resp[1] == 0xFF and resp[4] == 0:
-                        if num_bytes == 1:
-                            return resp[5]
-                        else:
-                            return (resp[5] << 8) | resp[6]
-        except Exception as e:
-            self.get_logger().error(f"Read register error on ID {servo_id}: {e}")
-        return None
+                if len(resp) < expected_len:
+                    self.get_logger().error(
+                        f"ID {servo_id} Reg {reg_address}: Read timeout. Expected {expected_len} bytes, got {len(resp)}."
+                    )
+                    if len(resp) > 0:
+                        self.get_logger().error(f"  Truncated Buffer (Hex): {resp.hex().upper()}")
+                    return None
 
+                # Scan buffer for our frame alignment
+                for i in range(len(resp) - expected_len + 1):
+                    if resp[i] == 0xFF and resp[i+1] == 0xFF:
+                        actual_id = resp[i+2]
+                        actual_len = resp[i+3]
+                        actual_err = resp[i+4]
+                        
+                        # Perfect Match Check
+                        if actual_id == servo_id and actual_len == expected_length_field and actual_err == 0:
+                            if num_bytes == 1:
+                                return resp[i+5]
+                            else:
+                                # Feetech hardware is Little-Endian: Low byte + (High byte << 8)
+                                return resp[i+5] | (resp[i+6] << 8)
+                        
+                        # Diagnostics for partial frame matches
+                        if actual_id == servo_id:
+                            self.get_logger().warn(
+                                f"ID {servo_id} Reg {reg_address} Match Fail -> "
+                                f"Header Match found at offset {i}, but metadata rejected. "
+                                f"Expected Len Field: {expected_length_field} (Got: {actual_len}), "
+                                f"Error Byte: 0 (Got: {actual_err})."
+                            )
+
+                # No valid sync window frames found anywhere in the buffer
+                self.get_logger().error(
+                    f"ID {servo_id} Reg {reg_address}: No valid frame boundary found in buffer. "
+                    f"Full Buffer Hex Dump: {resp.hex().upper()}"
+                )
+                
+        except Exception as e:
+            self.get_logger().error(f"Read register exception on ID {servo_id}: {e}")
+        return None
     def apply_servo_calibrations(self):
         """ Read and compare calibration settings before flashing to prevent redundant writes and detect dirty states """
         self.get_logger().info("Checking hardware calibration state against target configuration...")
@@ -214,7 +242,7 @@ class Ros2WaveshareBridge(Node):
         
         for servo_id, cfg in self.servo_configs.items():
             try:
-                def verify_and_flash(reg, target_val, num_bytes, name, target_mem_is_eeprom=True):
+                def verify_and_flash(reg, target_val, num_bytes, name, is_eeprom=True):
                     nonlocal dirty_eeprom_detected
                     current_val = self.read_register(servo_id, reg, num_bytes)
                     
@@ -226,14 +254,13 @@ class Ros2WaveshareBridge(Node):
                         self.get_logger().warn(
                             f"Servo {servo_id} {name} MISMATCH! Hardware: {current_val}, Config Target: {target_val}. Flashing register..."
                         )
-                        if target_mem_is_eeprom:
-                            self.write_register(servo_id, 55, 0, 1, is_eeprom=False) # Unlock RAM register 55
+                        if is_eeprom:
+                            self.write_register(servo_id, 55, 0, 1) # Unlock
                             
-                        # Pass the explicit boolean flag to the write call
-                        self.write_register(servo_id, reg, target_val, num_bytes, is_eeprom=target_mem_is_eeprom)
+                        self.write_register(servo_id, reg, target_val, num_bytes, is_eeprom=is_eeprom)
                         
-                        if target_mem_is_eeprom:
-                            self.write_register(servo_id, 55, 1, 1, is_eeprom=False) # Lock RAM register 55
+                        if is_eeprom:
+                            self.write_register(servo_id, 55, 1, 1) # Lock
                             dirty_eeprom_detected = True
                     else:
                         self.get_logger().info(f"Servo {servo_id} {name} matches hardware ({current_val}).")
@@ -243,22 +270,22 @@ class Ros2WaveshareBridge(Node):
                     offset = cfg['homing_offset']
                     if offset < 0:
                         offset += 65536
-                    verify_and_flash(31, offset, 2, "Homing Offset", target_mem_is_eeprom=True)
+                    verify_and_flash(31, offset, 2, "Homing Offset")
                 
                 # 2. Angle Range Limits (Min: Register 9, Max: Register 11)
                 if 'range_min' in cfg:
-                    verify_and_flash(9, cfg['range_min'], 2, "Min Angle Limit", target_mem_is_eeprom=True)
+                   verify_and_flash(9, cfg['range_min'], 2, "Min Angle Limit")
                 if 'range_max' in cfg:
-                    verify_and_flash(11, cfg['range_max'], 2, "Max Angle Limit", target_mem_is_eeprom=True)
-                
+                   verify_and_flash(11, cfg['range_max'], 2, "Max Angle Limit")
+
                 # 3. Control Loop PID Parameter Verification
-                if 'p_coefficient' in cfg: verify_and_flash(21, cfg['p_coefficient'], 1, "P Gain", target_mem_is_eeprom=True)
-                if 'i_coefficient' in cfg: verify_and_flash(22, cfg['i_coefficient'], 1, "I Gain", target_mem_is_eeprom=True)
-                if 'd_coefficient' in cfg: verify_and_flash(23, cfg['d_coefficient'], 1, "D Gain", target_mem_is_eeprom=True)
+                if 'p_coefficient' in cfg: verify_and_flash(21, cfg['p_coefficient'], 1, "P Gain")
+                if 'i_coefficient' in cfg: verify_and_flash(22, cfg['i_coefficient'], 1, "I Gain")
+                if 'd_coefficient' in cfg: verify_and_flash(23, cfg['d_coefficient'], 1, "D Gain")
                 
-                # 4. Dynamic Operating Modifiers (Acceleration is RAM-only)
-                if 'return_delay_time' in cfg: verify_and_flash(7, cfg['return_delay_time'], 1, "Return Delay", target_mem_is_eeprom=True)
-                if 'acceleration' in cfg:     verify_and_flash(41, cfg['acceleration'], 1, "Acceleration", target_mem_is_eeprom=False)
+                # 4. Dynamic Operating Modifiers
+                if 'return_delay_time' in cfg: verify_and_flash(7, cfg['return_delay_time'], 1, "Return Delay")
+                if 'acceleration' in cfg:     verify_and_flash(41, cfg['acceleration'], 1, "Acceleration", is_eeprom=False)
                 
             except Exception as e:
                 self.get_logger().error(f"Could not complete validation matrix on Servo {servo_id}: {e}")
