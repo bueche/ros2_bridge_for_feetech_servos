@@ -26,12 +26,12 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             'port',
-            default_value='/dev/ttyIMU',
+            default_value='/dev/ttyWaveshare',
             description='Serial port softlink'
         ),
         DeclareLaunchArgument(
             'baud',
-            default_value='115200',
+            default_value='1000000',
             description='Serial baud rate'
         ),
 

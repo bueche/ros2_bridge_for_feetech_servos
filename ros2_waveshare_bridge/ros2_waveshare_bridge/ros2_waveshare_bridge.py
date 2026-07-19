@@ -17,8 +17,9 @@ class Ros2WaveshareBridge(Node):
         super().__init__('ros2_waveshare_bridge')
         
         # Declare Parameters
-        self.declare_parameter('port', '/dev/ttyIMU') # on my pi this is a softlink to /dev/ttyUSB0 or USB1
-        self.declare_parameter('baud', 115200)
+        self.declare_parameter('port', '/dev/ttyWaveshare') 
+        # self.declare_parameter('baud', 115200)
+        self.declare_parameter('baud', 1000000)
         self.declare_parameter('urdf_path', '') # Absolute path to your URDF or XACRO file
         self.declare_parameter('joint_config_file', '') # Path to the optional YAML calibration configuration file
         
@@ -53,6 +54,13 @@ class Ros2WaveshareBridge(Node):
         if init_serial:
             try:
                 self.ser = serial.Serial(port=port, baudrate=baud, timeout=0.03, rtscts=False, dsrdtr=False)
+                # self.ser = serial.Serial(port=port, baudrate=baud, timeout=0.05)
+                
+                # FORCE HIGH LINE STATES FOR THE WAVESHARE CH343 CONTROLLER
+                # self.ser.dtr = True
+                # self.ser.rts = True
+                time.sleep(0.1) # Let the USB lines stabilize
+
                 self.get_logger().info(f"Dynamic Bridge Active. Operating {len(self.joint_names)} joints at {baud} baud.")
                 
                 # 3. Flash runtime calibration parameters to active servos on boot
@@ -159,11 +167,10 @@ class Ros2WaveshareBridge(Node):
     def write_register(self, servo_id, reg_address, value, num_bytes=1, is_eeprom=True):
         """ Helper utility to format and transmit standard WRITE packets down the serial lines """
         packet = bytearray([0xFF, 0xFF, servo_id])
-        length = 4 + num_bytes
+        length = 3 + num_bytes
         packet.append(length)
         
-        # Use 0x02 (WRITE DATA) for EEPROM, 0x03 (WRITE TIME) for volatile RAM
-        cmd = 0x02 if is_eeprom else 0x03
+        cmd = 0x03
         packet.append(cmd)
         packet.append(reg_address)
         
@@ -175,8 +182,14 @@ class Ros2WaveshareBridge(Node):
             packet.append((value >> 8) & 0xFF)
             
         packet.append(self.calculate_checksum(packet))
+        self.ser.reset_input_buffer()
         self.ser.write(packet)
-        time.sleep(0.002)
+        self.ser.flush()
+        # CRITICAL: Consume the servo's write-confirmation response packet (typically 6 bytes)
+        # to prevent it from bleeding into subsequent read operations.
+        time.sleep(0.004) 
+        if self.ser.in_waiting > 0:
+            self.ser.read(self.ser.in_waiting)
 
 
     def read_register(self, servo_id, reg_address, num_bytes=1):
