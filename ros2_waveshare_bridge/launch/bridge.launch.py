@@ -34,6 +34,11 @@ def generate_launch_description():
             default_value='1000000',
             description='Serial baud rate'
         ),
+        DeclareLaunchArgument(
+            'enable_tick_logging',
+            default_value='false',
+            description='Enable verbose logging of raw servo encoder ticks for diagnostics'
+        ),
 
         # Initialize the Node with parameter evaluations mapped
         Node(
@@ -46,6 +51,7 @@ def generate_launch_description():
                 'joint_config_file': LaunchConfiguration('joint_config_file'),
                 'port': LaunchConfiguration('port'),
                 'baud': LaunchConfiguration('baud'),
+                'enable_tick_logging': LaunchConfiguration('enable_tick_logging'),
             }]
         )
     ])
