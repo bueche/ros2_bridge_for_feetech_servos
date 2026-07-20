@@ -1,10 +1,10 @@
 joints:
   shoulder_pan:
     id: 1
-    homing_offset: -513
+    homing_offset: -1717
     range_min: 524
     range_max: 3588
-    p_coefficient: 16 # may be original 16 is too much, set 12
+    p_coefficient: 16
     i_coefficient: 0
     d_coefficient: 32
     return_delay_time: 0
@@ -12,7 +12,7 @@ joints:
 
   shoulder_lift:
     id: 2
-    homing_offset: -14
+    homing_offset: 1663
     range_min: 514
     range_max: 2313
     p_coefficient: 16
@@ -23,7 +23,7 @@ joints:
 
   elbow_flex:
     id: 3
-    homing_offset: 754
+    homing_offset: 1787
     range_min: 2306
     range_max: 3593
     p_coefficient: 16
@@ -34,7 +34,7 @@ joints:
 
   wrist_flex:
     id: 4
-    homing_offset: 243
+    homing_offset: 1566
     range_min: 770
     range_max: 3081
     p_coefficient: 16
@@ -45,7 +45,7 @@ joints:
 
   wrist_roll:
     id: 5
-    homing_offset: 1792
+    homing_offset: -1829
     range_min: 1033
     range_max: 3589
     p_coefficient: 16
@@ -56,7 +56,7 @@ joints:
 
   gripper:
     id: 6
-    homing_offset: 1523
+    homing_offset: 1530
     range_min: 525
     range_max: 1283
     p_coefficient: 16
