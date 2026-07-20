@@ -134,57 +134,68 @@ class Ros2WaveshareBridge(Node):
     def calculate_checksum(self, packet_bytes):
         return (~sum(packet_bytes[2:])) & 0xFF
 
+    
     def write_register(self, servo_id, reg_address, value, num_bytes=1, is_eeprom=True):
         packet = bytearray([0xFF, 0xFF, servo_id])
         length = 3 + num_bytes
         packet.append(length)
-        cmd = 0x03
+        cmd = 0x03  # WRITE command
         packet.append(cmd)
         packet.append(reg_address)
+        
         if num_bytes == 1:
             packet.append(value & 0xFF)
         else:
-            # Mask value to 16-bit binary (handles both positive and negative integers correctly)
+            # Handle 16-bit signed integers correctly (Little-Endian)
             val_16 = value & 0xFFFF
-            packet.append(val_16 & 0xFF)
-            packet.append((val_16 >> 8) & 0xFF)
+            packet.append(val_16 & 0xFF)        # Low byte
+            packet.append((val_16 >> 8) & 0xFF) # High byte
+            
         packet.append(self.calculate_checksum(packet))
-        self.ser.reset_input_buffer()
-        self.ser.write(packet)
-        self.ser.flush()
-        time.sleep(0.004)
-        if self.ser.in_waiting > 0:
-            self.ser.read(self.ser.in_waiting)
+        
+        with self.serial_lock:
+            self.ser.reset_input_buffer()
+            self.ser.write(packet)
+            self.ser.flush()
+            time.sleep(0.005) # Allow serial line and EEPROM write cycle to stabilize
+            if self.ser.in_waiting > 0:
+                self.ser.read(self.ser.in_waiting)
 
     def read_register(self, servo_id, reg_address, num_bytes=1):
         packet = bytearray([0xFF, 0xFF, servo_id, 0x04, 0x02, reg_address, num_bytes])
         packet.append(self.calculate_checksum(packet))
+        
         expected_length_field = 2 + num_bytes
         expected_len = 6 + num_bytes
+        
         try:
             with self.serial_lock:
                 self.ser.reset_input_buffer()
                 self.ser.write(packet)
-                resp = self.read_exact_bytes(expected_len + 30)
-                if len(resp) < expected_len:
+                
+                # Fetch response with a generous buffer window
+                resp = self.read_exact_bytes(expected_len + 10)
+                if not resp or len(resp) < expected_len:
                     return None
+
+                # Scan buffer for 0xFF 0xFF header alignment
                 for i in range(len(resp) - expected_len + 1):
                     if resp[i] == 0xFF and resp[i+1] == 0xFF:
                         actual_id = resp[i+2]
                         actual_len = resp[i+3]
                         actual_err = resp[i+4]
+                        
                         if actual_id == servo_id and actual_len == expected_length_field and actual_err == 0:
                             if num_bytes == 1:
                                 return resp[i+5]
                             else:
-                                # Clean Little-Endian Unpacking
+                                # Convert Little-Endian 16-bit unsigned bytes to signed Python int
                                 raw_val = resp[i+5] | (resp[i+6] << 8)
-                                # Convert 16-bit unsigned integer to signed Python int
-                                raw_val - 65536 if raw_val > 32767 else raw_val
+                                return raw_val - 65536 if raw_val > 32767 else raw_val
         except Exception as e:
             self.get_logger().error(f"Read register exception on ID {servo_id}: {e}")
         return None
-    
+
     def apply_servo_calibrations(self):
         self.get_logger().info("Checking hardware calibration state against target configuration...")
         dirty_eeprom_detected = False
@@ -194,7 +205,8 @@ class Ros2WaveshareBridge(Node):
                     nonlocal dirty_eeprom_detected
                     current_val = self.read_register(servo_id, reg, num_bytes)
                     if current_val is None:
-                        return
+                         self.get_logger().warn(f"Servo {servo_id} {name} no current value! continue ...")
+                         return
                     if current_val != target_val:
                         self.get_logger().warn(f"Servo {servo_id} {name} MISMATCH! Hardware: {current_val}, Config Target: {target_val}. Flashing...")
                         if target_mem_is_eeprom:
@@ -210,8 +222,7 @@ class Ros2WaveshareBridge(Node):
                         self.get_logger().info(f"Servo {servo_id} {name} matches hardware ({current_val}).")
 
                 # 1. Homing Offset Validation (Register 31, 2-byte signed storage)
-                if 'homing_offset' in cfg:
-                    verify_and_flash(31, cfg['homing_offset'], 2, "Homing Offset", target_mem_is_eeprom=True)
+                if 'homing_offset' in cfg: verify_and_flash(31, cfg['homing_offset'], 2, "Homing Offset", target_mem_is_eeprom=True)
                 if 'range_min' in cfg: verify_and_flash(9, cfg['range_min'], 2, "Min Angle Limit", target_mem_is_eeprom=True)
                 if 'range_max' in cfg: verify_and_flash(11, cfg['range_max'], 2, "Max Angle Limit", target_mem_is_eeprom=True)
                 if 'p_coefficient' in cfg: verify_and_flash(21, cfg['p_coefficient'], 1, "P Gain", target_mem_is_eeprom=True)
