@@ -134,8 +134,26 @@ class Ros2WaveshareBridge(Node):
     def calculate_checksum(self, packet_bytes):
         return (~sum(packet_bytes[2:])) & 0xFF
 
-    
-    def write_register(self, servo_id, reg_address, value, num_bytes=1, is_eeprom=True):
+    @staticmethod
+    def encode_sign_magnitude(value, sign_bit_index):
+        # Feetech SMS/STS signed registers (Homing_Offset, Present_Position, etc.)
+        # are sign-magnitude, NOT two's complement: bit `sign_bit_index` is a pure
+        # sign flag, and the bits below it hold the unsigned magnitude.
+        # Confirmed against the Feetech-derived encoding table used by LeRobot's
+        # feetech.py driver (Homing_Offset uses sign_bit_index=11, i.e. bit 0x0800).
+        max_magnitude = (1 << sign_bit_index) - 1
+        magnitude = abs(value)
+        if magnitude > max_magnitude:
+            raise ValueError(f"magnitude {magnitude} exceeds {max_magnitude} for sign_bit_index={sign_bit_index}")
+        return magnitude | (1 << sign_bit_index) if value < 0 else magnitude
+
+    @staticmethod
+    def decode_sign_magnitude(encoded, sign_bit_index):
+        sign_mask = 1 << sign_bit_index
+        magnitude = encoded & (sign_mask - 1)
+        return -magnitude if (encoded & sign_mask) else magnitude
+
+    def write_register(self, servo_id, reg_address, value, num_bytes=1, is_eeprom=True, sign_bit_index=None):
         packet = bytearray([0xFF, 0xFF, servo_id])
         length = 3 + num_bytes
         packet.append(length)
@@ -146,8 +164,10 @@ class Ros2WaveshareBridge(Node):
         if num_bytes == 1:
             packet.append(value & 0xFF)
         else:
-            # Handle 16-bit signed integers correctly (Little-Endian)
-            val_16 = value & 0xFFFF
+            if sign_bit_index is not None:
+                val_16 = self.encode_sign_magnitude(value, sign_bit_index)
+            else:
+                val_16 = value & 0xFFFF
             packet.append(val_16 & 0xFF)        # Low byte
             packet.append((val_16 >> 8) & 0xFF) # High byte
             
@@ -161,7 +181,7 @@ class Ros2WaveshareBridge(Node):
             if self.ser.in_waiting > 0:
                 self.ser.read(self.ser.in_waiting)
 
-    def read_register(self, servo_id, reg_address, num_bytes=1):
+    def read_register(self, servo_id, reg_address, num_bytes=1, sign_bit_index=None):
         packet = bytearray([0xFF, 0xFF, servo_id, 0x04, 0x02, reg_address, num_bytes])
         packet.append(self.calculate_checksum(packet))
         
@@ -189,9 +209,10 @@ class Ros2WaveshareBridge(Node):
                             if num_bytes == 1:
                                 return resp[i+5]
                             else:
-                                # Convert Little-Endian 16-bit unsigned bytes to signed Python int
                                 raw_val = resp[i+5] | (resp[i+6] << 8)
-                                return raw_val - 65536 if raw_val > 32767 else raw_val
+                                if sign_bit_index is not None:
+                                    return self.decode_sign_magnitude(raw_val, sign_bit_index)
+                                return raw_val
         except Exception as e:
             self.get_logger().error(f"Read register exception on ID {servo_id}: {e}")
         return None
@@ -201,9 +222,9 @@ class Ros2WaveshareBridge(Node):
         dirty_eeprom_detected = False
         for servo_id, cfg in self.servo_configs.items():
             try:
-                def verify_and_flash(reg, target_val, num_bytes, name, target_mem_is_eeprom=True):
+                def verify_and_flash(reg, target_val, num_bytes, name, target_mem_is_eeprom=True, sign_bit_index=None):
                     nonlocal dirty_eeprom_detected
-                    current_val = self.read_register(servo_id, reg, num_bytes)
+                    current_val = self.read_register(servo_id, reg, num_bytes, sign_bit_index=sign_bit_index)
                     if current_val is None:
                          self.get_logger().warn(f"Servo {servo_id} {name} no current value! continue ...")
                          return
@@ -212,7 +233,7 @@ class Ros2WaveshareBridge(Node):
                         if target_mem_is_eeprom:
                             self.write_register(servo_id, 55, 0, 1, is_eeprom=False)
                             time.sleep(0.01)
-                        self.write_register(servo_id, reg, target_val, num_bytes, is_eeprom=target_mem_is_eeprom)
+                        self.write_register(servo_id, reg, target_val, num_bytes, is_eeprom=target_mem_is_eeprom, sign_bit_index=sign_bit_index)
                         time.sleep(0.01)
                         if target_mem_is_eeprom:
                             self.write_register(servo_id, 55, 1, 1, is_eeprom=False)
@@ -221,8 +242,8 @@ class Ros2WaveshareBridge(Node):
                     else:
                         self.get_logger().info(f"Servo {servo_id} {name} matches hardware ({current_val}).")
 
-                # 1. Homing Offset Validation (Register 31, 2-byte signed storage)
-                if 'homing_offset' in cfg: verify_and_flash(31, cfg['homing_offset'], 2, "Homing Offset", target_mem_is_eeprom=True)
+                # 1. Homing Offset Validation (Register 31, sign-magnitude: bit 11 = sign, bits 0-10 = magnitude)
+                if 'homing_offset' in cfg: verify_and_flash(31, cfg['homing_offset'], 2, "Homing Offset", target_mem_is_eeprom=True, sign_bit_index=11)
                 if 'range_min' in cfg: verify_and_flash(9, cfg['range_min'], 2, "Min Angle Limit", target_mem_is_eeprom=True)
                 if 'range_max' in cfg: verify_and_flash(11, cfg['range_max'], 2, "Max Angle Limit", target_mem_is_eeprom=True)
                 if 'p_coefficient' in cfg: verify_and_flash(21, cfg['p_coefficient'], 1, "P Gain", target_mem_is_eeprom=True)
@@ -263,7 +284,9 @@ class Ros2WaveshareBridge(Node):
             return None
 
         # Clean Little-Endian unpacking
-        raw_ticks = resp[5] | (resp[6] << 8)
+        # Present_Position is sign-magnitude (bit 15 = sign), used for multi-turn
+        # values that go negative -- NOT two's complement.
+        raw_ticks = self.decode_sign_magnitude(resp[5] | (resp[6] << 8), 15)
         raw_load = resp[9] | (resp[10] << 8)
         volt = resp[11]
         temp = resp[12]

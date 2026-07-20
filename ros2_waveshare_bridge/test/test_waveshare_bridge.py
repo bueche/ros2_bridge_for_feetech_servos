@@ -16,14 +16,16 @@ def make_mock_response(ticks=2048, load=0, volt=120, temp=45, current=0):
     resp[4] = 0x00 # Error status flag
      
     # Target Telemetry Registers matching bridge node index offsets
-    resp[5] = (ticks >> 8) & 0xFF
-    resp[6] = ticks & 0xFF
-    resp[9] = (load >> 8) & 0xFF
-    resp[10] = load & 0xFF
+    # Little-Endian: low byte at the lower index, matching decode_telemetry_packet
+    # (and matching how the real hardware responses are actually ordered).
+    resp[5] = ticks & 0xFF
+    resp[6] = (ticks >> 8) & 0xFF
+    resp[9] = load & 0xFF
+    resp[10] = (load >> 8) & 0xFF
     resp[11] = volt & 0xFF
     resp[12] = temp & 0xFF
-    resp[18] = (current >> 8) & 0xFF
-    resp[19] = current & 0xFF
+    resp[18] = current & 0xFF
+    resp[19] = (current >> 8) & 0xFF
     return resp
 
 def test_decoupled_alignment_matrix():
@@ -70,9 +72,10 @@ def test_decoupled_alignment_matrix():
         assert data_p_overflow['position'] == 0.0
 
         # Test Negative Multi-turn wrap
-        # Raw ticks = -2048 (should resolve to 2048 after modulo, resulting in 0.0 radians)
-        # Since raw_ticks is read as unsigned 16-bit: -2048 maps to 63488
-        data_p_neg_overflow = node.decode_telemetry_packet(make_mock_response(ticks=63488), servo_id)
+        # Present_Position is sign-magnitude, not two's complement: bit 15 is the
+        # sign flag, bits 0-14 are the magnitude. -2048 encodes as 0x8000 | 2048 = 34816.
+        # After decode_sign_magnitude -> -2048, then -2048 % 4096 == 2048 -> 0.0 rad.
+        data_p_neg_overflow = node.decode_telemetry_packet(make_mock_response(ticks=34816), servo_id)
         assert data_p_neg_overflow['position'] == 0.0
 
     finally:
