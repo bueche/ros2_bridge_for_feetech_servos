@@ -108,7 +108,8 @@ class Ros2WaveshareBridge(Node):
                             'homing_offset': int(params.get('homing_offset', offset_val - 2048)),
                             'p_coefficient': int(params.get('p_cofficient', params.get('p_coefficient', 16))),
                             'i_coefficient': int(params.get('i_coefficient', 0)),
-                            'd_coefficient': int(params.get('d_coefficient', 32))
+                            'd_coefficient': int(params.get('d_coefficient', 32)),
+                            'drive_mode': int(params.get('drive_mode', 0))  # 0=normal, 1=inverted (matches LeRobot's per-motor calibration field -- not derivable from servo id)
                         }
                         self.get_logger().info(f"Autonomously Mapped URDF Joint '{j_name}' to Servo ID {servo_id}")
         except Exception as e:
@@ -124,7 +125,7 @@ class Ros2WaveshareBridge(Node):
                     if clean_name in self.joint_map:
                         servo_id = self.joint_map[clean_name]
                         for key in ['homing_offset', 'p_coefficient', 'i_coefficient', 'd_coefficient', 
-                                    'acceleration', 'return_delay_time', 'max_torque_limit']:
+                                    'acceleration', 'return_delay_time', 'max_torque_limit', 'drive_mode']:
                             if key in data:
                                 self.servo_configs[servo_id][key] = int(data[key])
                         self.get_logger().info(f"Merged YAML adjustments over Joint '{clean_name}' (ID: {servo_id})")
@@ -268,14 +269,16 @@ class Ros2WaveshareBridge(Node):
         return buffer if len(buffer) == num_bytes else buffer
 
     def radians_to_ticks(self, rad, servo_id):
-        if servo_id % 2 == 0:
+        inverted = self.servo_configs.get(servo_id, {}).get('drive_mode', 0) == 1
+        if inverted:
             ticks = int(2048 - (rad * (2048.0 / math.pi)))
         else:
             ticks = int(2048 + (rad * (2048.0 / math.pi)))
         return max(min(ticks, 4095), 0)
 
     def waveshare_ticks_to_radians(self, ticks, servo_id):
-        if servo_id % 2 == 0:
+        inverted = self.servo_configs.get(servo_id, {}).get('drive_mode', 0) == 1
+        if inverted:
             return (2048 - ticks) * (math.pi / 2048.0)
         return (ticks - 2048) * (math.pi / 2048.0)
 
