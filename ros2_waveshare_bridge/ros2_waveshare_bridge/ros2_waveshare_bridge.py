@@ -22,12 +22,14 @@ class Ros2WaveshareBridge(Node):
         self.declare_parameter('urdf_path', '')
         self.declare_parameter('joint_config_file', '')
         self.declare_parameter('enable_tick_logging', False) # Diagnostic Flag
+        self.declare_parameter('disable_torque', False) # Calibration Flag: keep torque off at boot instead of the normal on-at-boot behavior
         
         port = self.get_parameter('port').get_parameter_value().string_value
         baud = self.get_parameter('baud').get_parameter_value().integer_value
         urdf_path = self.get_parameter('urdf_path').get_parameter_value().string_value
         yaml_path = self.get_parameter('joint_config_file').get_parameter_value().string_value
         self.log_ticks = self.get_parameter('enable_tick_logging').get_parameter_value().bool_value
+        self.disable_torque = self.get_parameter('disable_torque').get_parameter_value().bool_value
         
         self.get_logger().info(f"URDF path =: '{urdf_path}'.")
         
@@ -59,6 +61,7 @@ class Ros2WaveshareBridge(Node):
                 time.sleep(0.1)
                 self.get_logger().info(f"Dynamic Bridge Active. Operating {len(self.joint_names)} joints at {baud} baud.")
                 self.apply_servo_calibrations()
+                self.set_torque_state(enable=not self.disable_torque)
             except Exception as e:
                 self.get_logger().error(f"Failed to open port: {e}")
                 return
@@ -259,6 +262,15 @@ class Ros2WaveshareBridge(Node):
         else:
             self.get_logger().info("All active servo parameters match your YAML. Robot coordinate loop synchronized.")
 
+    def set_torque_state(self, enable):
+        state = 1 if enable else 0
+        for servo_id in self.active_ids:
+            try:
+                self.write_register(servo_id, 40, state, 1, is_eeprom=False)
+            except Exception as e:
+                self.get_logger().error(f"Failed to set torque state on servo {servo_id}: {e}")
+        self.get_logger().info(f"Torque {'ENABLED' if enable else 'DISABLED'} on {len(self.active_ids)} servos.")
+
     def read_exact_bytes(self, num_bytes):
         buffer = bytearray()
         start_time = time.time()
@@ -404,12 +416,27 @@ class Ros2WaveshareBridge(Node):
                     except Exception as e:
                         self.get_logger().error(f"Write error: {e}")
 
+    def destroy_node(self):
+        # Always torque off on the way out, regardless of the disable_torque flag --
+        # that flag only controls the boot-time state.
+        if getattr(self, 'ser', None) and self.ser.is_open and getattr(self, 'active_ids', None):
+            try:
+                self.set_torque_state(enable=False)
+            except Exception as e:
+                self.get_logger().error(f"Failed to disable torque on shutdown: {e}")
+        super().destroy_node()
+
 def main(args=None):
     rclpy.init(args=args)
     node = Ros2WaveshareBridge(init_serial=True)
-    if hasattr(node, 'ser') and node.ser:
-        rclpy.spin(node)
-    rclpy.shutdown()
+    try:
+        if hasattr(node, 'ser') and node.ser:
+            rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
 
 if __name__ == '__main__':
     main()
