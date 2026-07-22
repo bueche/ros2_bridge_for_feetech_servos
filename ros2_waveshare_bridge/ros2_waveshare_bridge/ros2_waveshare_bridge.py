@@ -439,6 +439,12 @@ class Ros2WaveshareBridge(Node):
                     packet.append(self.calculate_checksum(packet))
                     try:
                         self.ser.write(packet)
+                        self.ser.flush()
+                        time.sleep(0.003)  # settle time between packets on this half-duplex,
+                                           # single-wire daisy chain -- every other multi-write
+                                           # sequence in this file has one; this loop was the
+                                           # one place that didn't, and back-to-back writes with
+                                           # zero gap risk one packet getting garbled on the bus.
                     except Exception as e:
                         self.get_logger().error(f"Write error: {e}")
 
