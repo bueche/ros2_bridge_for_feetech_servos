@@ -229,21 +229,28 @@ class Ros2WaveshareBridge(Node):
             try:
                 def verify_and_flash(reg, target_val, num_bytes, name, target_mem_is_eeprom=True, sign_bit_index=None):
                     nonlocal dirty_eeprom_detected
-                    current_val = self.read_register(servo_id, reg, num_bytes, sign_bit_index=sign_bit_index)
+                    current_val = None
+                    for attempt in range(3):
+                        current_val = self.read_register(servo_id, reg, num_bytes, sign_bit_index=sign_bit_index)
+                        if current_val is not None:
+                            break
+                        time.sleep(0.02)  # give a busy servo (e.g. mid EEPROM commit) a moment to recover
                     if current_val is None:
-                         self.get_logger().warn(f"Servo {servo_id} {name} no current value! continue ...")
+                         self.get_logger().warn(f"Servo {servo_id} {name} no current value after 3 attempts! Skipping this cycle.")
                          return
                     if current_val != target_val:
                         self.get_logger().warn(f"Servo {servo_id} {name} MISMATCH! Hardware: {current_val}, Config Target: {target_val}. Flashing...")
                         if target_mem_is_eeprom:
                             self.write_register(servo_id, 55, 0, 1, is_eeprom=False)
-                            time.sleep(0.01)
+                            time.sleep(0.02)
                         self.write_register(servo_id, reg, target_val, num_bytes, is_eeprom=target_mem_is_eeprom, sign_bit_index=sign_bit_index)
-                        time.sleep(0.01)
+                        time.sleep(0.02)
                         if target_mem_is_eeprom:
                             self.write_register(servo_id, 55, 1, 1, is_eeprom=False)
                             dirty_eeprom_detected = True
-                            time.sleep(0.01)
+                            time.sleep(0.03)  # EEPROM commit settle time -- the next command (another
+                                              # register's read/write) can otherwise land while this
+                                              # servo is still busy committing and get no response.
                     else:
                         self.get_logger().info(f"Servo {servo_id} {name} matches hardware ({current_val}).")
 
