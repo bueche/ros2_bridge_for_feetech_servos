@@ -39,6 +39,11 @@ def generate_launch_description():
             default_value='false',
             description='Enable verbose logging of raw servo encoder ticks for diagnostics'
         ),
+        DeclareLaunchArgument(
+            'disable_torque',
+            default_value='false',
+            description='Turn off torque when booting robot'
+        ),
 
         # Initialize the Node with parameter evaluations mapped
         Node(
@@ -52,6 +57,7 @@ def generate_launch_description():
                 'port': LaunchConfiguration('port'),
                 'baud': LaunchConfiguration('baud'),
                 'enable_tick_logging': LaunchConfiguration('enable_tick_logging'),
+                'disable_torque': LaunchConfiguration('disable_torque'),
             }]
         )
     ])
