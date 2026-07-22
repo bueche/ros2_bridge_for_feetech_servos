@@ -128,7 +128,8 @@ class Ros2WaveshareBridge(Node):
                     if clean_name in self.joint_map:
                         servo_id = self.joint_map[clean_name]
                         for key in ['homing_offset', 'p_coefficient', 'i_coefficient', 'd_coefficient', 
-                                    'acceleration', 'return_delay_time', 'max_torque_limit', 'drive_mode']:
+                                    'acceleration', 'return_delay_time', 'max_torque_limit', 'drive_mode',
+                                    'range_min', 'range_max']:
                             if key in data:
                                 self.servo_configs[servo_id][key] = int(data[key])
                         self.get_logger().info(f"Merged YAML adjustments over Joint '{clean_name}' (ID: {servo_id})")
