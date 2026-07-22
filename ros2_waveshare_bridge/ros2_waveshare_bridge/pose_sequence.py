@@ -5,6 +5,7 @@ of poses defined in a yaml file. Publishes JointTrajectory messages, pausing
 between poses.
 """
 
+import math
 import sys
 import time
 
@@ -13,10 +14,13 @@ import rclpy
 from rclpy.node import Node
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from builtin_interfaces.msg import Duration
+from sensor_msgs.msg import JointState
+from feetech_interfaces.msg import FeetechState
 
 TRAJECTORY_TOPIC = '/joint_trajectory_controller/joint_trajectory'  # the waveshare bridge's subscription
 DEFAULT_DURATION_SEC = 2      # used when a pose doesn't specify its own 'duration'
 POST_MOVE_PAUSE_SEC = 2.0     # matches the original script's fixed 2s pause after each move
+DEFAULT_JOINT_SPAN_RAD = 2 * math.pi  # fallback span if no joint_config_file is given
 
 
 class PoseSequenceNode(Node):
@@ -24,7 +28,13 @@ class PoseSequenceNode(Node):
         super().__init__('pose_sequence_node')
 
         self.declare_parameter('pose_file', '')
+        self.declare_parameter('joint_config_file', '')  # optional: enables a proper per-joint tolerance
+        self.declare_parameter('deviation_threshold_fraction', 0.15)
+
         pose_file = self.get_parameter('pose_file').get_parameter_value().string_value
+        joint_config_file = self.get_parameter('joint_config_file').get_parameter_value().string_value
+        self.threshold_fraction = self.get_parameter('deviation_threshold_fraction').get_parameter_value().double_value
+
         if not pose_file:
             self.get_logger().error(
                 "No pose_file provided. Launch with: "
@@ -32,8 +42,15 @@ class PoseSequenceNode(Node):
             sys.exit(1)
 
         self.poses, self.joint_names = self.load_poses(pose_file)
+        self.joint_span_rad = self.load_joint_spans(joint_config_file, self.joint_names)
 
         self.publisher = self.create_publisher(JointTrajectory, TRAJECTORY_TOPIC, 10)
+
+        self.latest_positions = {}
+        self.joint_state_sub = self.create_subscription(JointState, '/joint_states', self._on_joint_state, 10)
+
+        self.latest_hw_state = {}  # servo_id -> raw error byte
+        self.feetech_sub = self.create_subscription(FeetechState, '/feetech_state', self._on_feetech_state, 10)
 
         self.get_logger().info('Pose Sequence Node initialized')
         self.get_logger().info(f'Loaded {len(self.poses)} poses from {pose_file}')
@@ -41,6 +58,46 @@ class PoseSequenceNode(Node):
         self.get_logger().warn(
             'Make sure these joint names match your URDF/bridge joint names exactly -- '
             'the bridge silently ignores any joint name it does not recognize.')
+
+    def _on_joint_state(self, msg):
+        for name, pos in zip(msg.name, msg.position):
+            self.latest_positions[name] = pos
+
+    def _on_feetech_state(self, msg):
+        for servo_id, hw_state in zip(msg.id, msg.hw_state):
+            self.latest_hw_state[servo_id] = hw_state
+
+    def load_joint_spans(self, path, joint_names):
+        if not path:
+            self.get_logger().warn(
+                "No joint_config_file provided -- the deviation check will use a coarse "
+                f"default span of {DEFAULT_JOINT_SPAN_RAD:.2f} rad (full single-turn range) "
+                "for every joint, rather than each joint's real calibrated range. Pass "
+                "joint_config_file:=<path to your so-arm101.yaml> for a tighter, per-joint "
+                "tolerance.")
+            return {name: DEFAULT_JOINT_SPAN_RAD for name in joint_names}
+
+        try:
+            with open(path, 'r') as f:
+                cfg = yaml.safe_load(f)
+        except Exception as e:
+            self.get_logger().error(f"Could not read/parse joint_config_file '{path}': {e}")
+            sys.exit(1)
+
+        joints_cfg = (cfg or {}).get('joints', {})
+        spans = {}
+        for name in joint_names:
+            jcfg = joints_cfg.get(name)
+            if not jcfg or 'range_min' not in jcfg or 'range_max' not in jcfg:
+                self.get_logger().warn(
+                    f"No range_min/range_max for '{name}' in {path}; using default span for it.")
+                spans[name] = DEFAULT_JOINT_SPAN_RAD
+            else:
+                # Tick-to-radian scale (pi/2048) is fixed regardless of drive_mode or
+                # homing_offset -- drive_mode only affects which end is "positive", not
+                # the physical span size, so this is safe to compute directly from ticks.
+                spans[name] = abs(jcfg['range_max'] - jcfg['range_min']) * (math.pi / 2048.0)
+        return spans
 
     def load_poses(self, path):
         try:
@@ -85,8 +142,44 @@ class PoseSequenceNode(Node):
         msg.points = [point]
         return msg
 
+    def check_pose_reached(self, target_positions):
+        """Sample current state and report any joint that's out of tolerance or
+        flagging a real hardware error. Returns a list of problem strings (empty
+        list = all clear)."""
+        # Drain the subscription queues for a full second so latest_positions/
+        # latest_hw_state reflect a fresh reading from the bridge, not a stale one
+        # from before this move (the bridge's telemetry timer publishes on its own
+        # cycle, not on request).
+        deadline = time.time() + 1.0
+        while time.time() < deadline:
+            rclpy.spin_once(self, timeout_sec=0.1)
+
+        problems = []
+        for name, target in zip(self.joint_names, target_positions):
+            actual = self.latest_positions.get(name)
+            if actual is None:
+                problems.append(f"{name}: no /joint_states data received yet")
+                continue
+            tolerance = self.threshold_fraction * self.joint_span_rad[name]
+            deviation = abs(actual - target)
+            if deviation > tolerance:
+                problems.append(
+                    f"{name}: target={target:+.3f} rad, actual={actual:+.3f} rad, "
+                    f"deviation={deviation:.3f} rad exceeds tolerance {tolerance:.3f} rad "
+                    f"({self.threshold_fraction*100:.0f}% of {self.joint_span_rad[name]:.3f} rad span)")
+
+        for servo_id, hw_state in self.latest_hw_state.items():
+            if hw_state > 0:
+                problems.append(f"servo id {servo_id}: hardware error flag(s) set (raw byte {hw_state:#04x})")
+            elif hw_state < 0:
+                problems.append(f"servo id {servo_id}: hw_state not yet read this cycle -- comms may be unreliable")
+
+        return problems
+
     def run_sequence(self):
-        """Execute the pose sequence with pauses between poses."""
+        """Execute the pose sequence with pauses between poses. Stops immediately
+        if a pose isn't reached within tolerance or a servo reports a hardware
+        error."""
         self.get_logger().info('Starting pose sequence...')
 
         for i, pose in enumerate(self.poses):
@@ -103,18 +196,27 @@ class PoseSequenceNode(Node):
             self.get_logger().info(f"Waiting {wait_time}s (movement + {POST_MOVE_PAUSE_SEC}s pause)...")
             time.sleep(wait_time)
 
+            problems = self.check_pose_reached(pose['positions'])
+            if problems:
+                self.get_logger().error(f"Pose '{pose['name']}' failed validation -- stopping sequence:")
+                for p in problems:
+                    self.get_logger().error(f"  - {p}")
+                return False
+
         self.get_logger().info(f"\n{'='*50}")
         self.get_logger().info('Pose sequence complete!')
         self.get_logger().info('All poses executed successfully.')
+        return True
 
 
 def main(args=None):
     rclpy.init(args=args)
 
     node = PoseSequenceNode()
+    success = False
 
     try:
-        node.run_sequence()
+        success = node.run_sequence()
 
         # Keep node alive briefly to ensure last message is sent
         time.sleep(1.0)
@@ -124,6 +226,8 @@ def main(args=None):
     finally:
         node.destroy_node()
         rclpy.shutdown()
+
+    sys.exit(0 if success else 1)
 
 
 if __name__ == '__main__':

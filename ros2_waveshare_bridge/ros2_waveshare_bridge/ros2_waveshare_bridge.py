@@ -15,6 +15,7 @@ import xml.etree.ElementTree as ET
 class Ros2WaveshareBridge(Node):
     def __init__(self, init_serial=True):
         super().__init__('ros2_waveshare_bridge')
+        self.torque_enabled = False  # updated for real by set_torque_state()
         
         # Declare Parameters
         self.declare_parameter('port', '/dev/ttyWaveshare')
@@ -277,6 +278,7 @@ class Ros2WaveshareBridge(Node):
                 self.write_register(servo_id, 40, state, 1, is_eeprom=False)
             except Exception as e:
                 self.get_logger().error(f"Failed to set torque state on servo {servo_id}: {e}")
+        self.torque_enabled = enable
         self.get_logger().info(f"Torque {'ENABLED' if enable else 'DISABLED'} on {len(self.active_ids)} servos.")
 
     def read_exact_bytes(self, num_bytes):
@@ -302,9 +304,19 @@ class Ros2WaveshareBridge(Node):
             return (2048 - ticks) * (math.pi / 2048.0)
         return (ticks - 2048) * (math.pi / 2048.0)
 
+    def decode_error_byte(self, err_byte):
+        # Bit layout per Feetech's documented status byte (cross-referenced against
+        # python-st3215 and independent protocol write-ups): bit0=Voltage,
+        # bit1=Sensor, bit2=Temperature, bit3=Current, bit4=Angle, bit5=Overload.
+        # A set bit means that error IS present.
+        flags = ['Voltage', 'Sensor', 'Temperature', 'Current', 'Angle', 'Overload']
+        return [flags[i] for i in range(6) if err_byte & (1 << i)]
+
     def decode_telemetry_packet(self, resp, servo_id):
         if not resp or len(resp) != 21 or resp[0] != 0xFF or resp[1] != 0xFF:
             return None
+
+        hw_state = resp[4]  # status/error byte -- 0 means no error
 
         # Clean Little-Endian unpacking
         # Present_Position is sign-magnitude (bit 15 = sign), used for multi-turn
@@ -317,6 +329,10 @@ class Ros2WaveshareBridge(Node):
 
         if self.log_ticks:
             self.get_logger().info(f"[DIAG] Servo ID {servo_id} -> Raw Ticks: {raw_ticks}")
+
+        if hw_state != 0:
+            flags = self.decode_error_byte(hw_state)
+            self.get_logger().error(f"Servo {servo_id} reports hardware error(s): {flags} (raw byte: {hw_state:#04x})")
 
         single_turn_ticks = raw_ticks % 4096
         position_rad = self.waveshare_ticks_to_radians(single_turn_ticks, servo_id)
@@ -343,7 +359,8 @@ class Ros2WaveshareBridge(Node):
             'temperature': temperature,
             'voltage': voltage,
             'current': current_ma,
-            'load': load_val
+            'load': load_val,
+            'hw_state': hw_state
         }
 
     def _query_single_servo_raw_bytes(self, servo_id):
@@ -364,8 +381,8 @@ class Ros2WaveshareBridge(Node):
         feetech_msg.header.stamp = now
         feetech_msg.comm_state = FeetechState.COMM_STATE_OK
         feetech_msg.id = self.active_ids
-        feetech_msg.torque_state = [True] * len(self.active_ids)
-        feetech_msg.hw_state = [0] * len(self.active_ids)
+        feetech_msg.torque_state = [self.torque_enabled] * len(self.active_ids)
+        feetech_msg.hw_state = [-1] * len(self.active_ids)  # -1 = not yet read this cycle, NOT "no error"
 
         joint_msg = JointState()
         joint_msg.header.stamp = now
@@ -376,7 +393,7 @@ class Ros2WaveshareBridge(Node):
         success_count = 0
 
         with self.serial_lock:
-            for servo_id in self.active_ids:
+            for i, servo_id in enumerate(self.active_ids):
                 resp = self._query_single_servo_raw_bytes(servo_id)
                 data = self.decode_telemetry_packet(resp, servo_id)
                 if data is not None:
@@ -385,6 +402,7 @@ class Ros2WaveshareBridge(Node):
                     volts.append(int(data['voltage']))
                     currents.append(data['current'])
                     loads.append(data['load'])
+                    feetech_msg.hw_state[i] = data['hw_state']
                     success_count += 1
                 else:
                     feetech_msg.comm_state = FeetechState.COMM_STATE_ITEM_READ_FAIL
