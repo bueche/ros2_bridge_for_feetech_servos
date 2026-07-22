@@ -30,6 +30,7 @@ setup(
     entry_points={
         'console_scripts': [
             'bridge_node = ros2_waveshare_bridge.ros2_waveshare_bridge:main',
+            'pose_sequence = ros2_waveshare_bridge.pose_sequence:main',
         ],
     },
 )
