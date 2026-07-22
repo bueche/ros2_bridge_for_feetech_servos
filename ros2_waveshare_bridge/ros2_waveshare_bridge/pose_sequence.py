@@ -21,6 +21,14 @@ TRAJECTORY_TOPIC = '/joint_trajectory_controller/joint_trajectory'  # the wavesh
 DEFAULT_DURATION_SEC = 2      # used when a pose doesn't specify its own 'duration'
 POST_MOVE_PAUSE_SEC = 2.0     # matches the original script's fixed 2s pause after each move
 DEFAULT_JOINT_SPAN_RAD = 2 * math.pi  # fallback span if no joint_config_file is given
+MONITOR_POLL_SEC = 0.05       # how often to check for hw_state changes during the wait
+
+
+def decode_error_byte(err_byte):
+    # Must stay in sync with the identical decode in ros2_waveshare_bridge.py.
+    # bit0=Voltage, bit1=Sensor, bit2=Temperature, bit3=Current, bit4=Angle, bit5=Overload.
+    flags = ['Voltage', 'Sensor', 'Temperature', 'Current', 'Angle', 'Overload']
+    return [flags[i] for i in range(6) if err_byte & (1 << i)]
 
 
 class PoseSequenceNode(Node):
@@ -142,6 +150,31 @@ class PoseSequenceNode(Node):
         msg.points = [point]
         return msg
 
+    def monitor_during_move(self, wait_time):
+        """Poll /feetech_state throughout the wait (not just once at the end) and
+        log the instant an error flag is raised or clears, timestamped relative to
+        when this move started -- makes it possible to line up a transient error
+        with exactly what the servo was doing at that moment, instead of only
+        seeing the end state after the fact."""
+        rclpy.spin_once(self, timeout_sec=0.05)  # get whatever's most current right now
+        last_logged = dict(self.latest_hw_state)  # baseline: don't re-log pre-existing state
+
+        start = time.time()
+        while time.time() - start < wait_time:
+            rclpy.spin_once(self, timeout_sec=MONITOR_POLL_SEC)
+            elapsed = time.time() - start
+            for servo_id, hw_state in self.latest_hw_state.items():
+                prev = last_logged.get(servo_id, 0)
+                if hw_state != prev:
+                    if hw_state > 0:
+                        flags = decode_error_byte(hw_state)
+                        self.get_logger().error(
+                            f"  [t={elapsed:+.2f}s] servo id {servo_id}: hardware error RAISED "
+                            f"-- {flags} (raw byte {hw_state:#04x})")
+                    elif prev > 0:
+                        self.get_logger().info(f"  [t={elapsed:+.2f}s] servo id {servo_id}: hardware error CLEARED")
+                    last_logged[servo_id] = hw_state
+
     def check_pose_reached(self, target_positions):
         """Sample current state and report any joint that's out of tolerance or
         flagging a real hardware error. Returns a list of problem strings (empty
@@ -170,7 +203,8 @@ class PoseSequenceNode(Node):
 
         for servo_id, hw_state in self.latest_hw_state.items():
             if hw_state > 0:
-                problems.append(f"servo id {servo_id}: hardware error flag(s) set (raw byte {hw_state:#04x})")
+                flags = decode_error_byte(hw_state)
+                problems.append(f"servo id {servo_id}: hardware error flag(s) set -- {flags} (raw byte {hw_state:#04x})")
             elif hw_state < 0:
                 problems.append(f"servo id {servo_id}: hw_state not yet read this cycle -- comms may be unreliable")
 
@@ -193,8 +227,8 @@ class PoseSequenceNode(Node):
             self.get_logger().info(f"Published trajectory, duration: {pose['duration']}s")
 
             wait_time = pose['duration'] + POST_MOVE_PAUSE_SEC
-            self.get_logger().info(f"Waiting {wait_time}s (movement + {POST_MOVE_PAUSE_SEC}s pause)...")
-            time.sleep(wait_time)
+            self.get_logger().info(f"Waiting {wait_time}s (movement + {POST_MOVE_PAUSE_SEC}s pause)... watching for hardware errors as they happen")
+            self.monitor_during_move(wait_time)
 
             problems = self.check_pose_reached(pose['positions'])
             if problems:
