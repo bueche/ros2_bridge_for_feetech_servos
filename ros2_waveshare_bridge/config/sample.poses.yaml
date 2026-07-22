@@ -4,7 +4,7 @@ poses:
   - name: pose 1 - poised to work
     positions:
       shoulder_pan: -0.05368932757599744
-      shoulder_lift: -0.047553404424454875
+      shoulder_lift: 0.010737865515199488
       elbow_flex: -0.581378718608658
       wrist_flex: -0.8620972027917303
       wrist_roll: -0.15493205957644976
@@ -68,7 +68,7 @@ poses:
   - name: pose 8 - poised to work or shutdown
     positions:
       shoulder_pan: -0.05368932757599744
-      shoulder_lift: -0.047553404424454875
+      shoulder_lift: 0.010737865515199488
       elbow_flex: -0.581378718608658
       wrist_flex: -0.8620972027917303
       wrist_roll: -0.15493205957644976

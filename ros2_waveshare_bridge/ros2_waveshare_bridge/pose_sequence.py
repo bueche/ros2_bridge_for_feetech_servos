@@ -19,7 +19,7 @@ from feetech_interfaces.msg import FeetechState
 
 TRAJECTORY_TOPIC = '/joint_trajectory_controller/joint_trajectory'  # the waveshare bridge's subscription
 DEFAULT_DURATION_SEC = 2      # used when a pose doesn't specify its own 'duration'
-POST_MOVE_PAUSE_SEC = 2.0     # matches the original script's fixed 2s pause after each move
+POST_MOVE_PAUSE_SEC = 0.0     # matches the original script's fixed 2s pause after each move
 DEFAULT_JOINT_SPAN_RAD = 2 * math.pi  # fallback span if no joint_config_file is given
 MONITOR_POLL_SEC = 0.05       # how often to check for hw_state changes during the wait
 
