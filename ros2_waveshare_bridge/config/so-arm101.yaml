@@ -8,9 +8,9 @@ joints:
   shoulder_pan:
     id: 1
     homing_offset: -1717
-    drive_mode: 0  # TODO: verify direction on the real joint before trusting this
-    range_min: 524
-    range_max: 3588
+    drive_mode: 0  
+    range_min: 948
+    range_max: 3026
     p_coefficient: 16
     i_coefficient: 0
     d_coefficient: 32
@@ -20,9 +20,9 @@ joints:
   shoulder_lift:
     id: 2
     homing_offset: 1663
-    drive_mode: 0  # TODO: verify direction on the real joint before trusting this
-    range_min: 514
-    range_max: 2313
+    drive_mode: 1  
+    range_min: 852
+    range_max: 3157
     p_coefficient: 16
     i_coefficient: 0
     d_coefficient: 32
@@ -32,9 +32,9 @@ joints:
   elbow_flex:
     id: 3
     homing_offset: 1787
-    drive_mode: 0  # TODO: verify direction on the real joint before trusting this
-    range_min: 2306
-    range_max: 3593
+    drive_mode: 1  
+    range_min: 853
+    range_max: 2950
     p_coefficient: 16
     i_coefficient: 0
     d_coefficient: 32
@@ -44,9 +44,9 @@ joints:
   wrist_flex:
     id: 4
     homing_offset: 1566
-    drive_mode: 0  # TODO: verify direction on the real joint before trusting this
-    range_min: 770
-    range_max: 3081
+    drive_mode: 1  
+    range_min: 886
+    range_max: 3206
     p_coefficient: 16
     i_coefficient: 0
     d_coefficient: 32
@@ -56,9 +56,9 @@ joints:
   wrist_roll:
     id: 5
     homing_offset: -1829
-    drive_mode: 0  # TODO: verify direction on the real joint before trusting this
-    range_min: 1033
-    range_max: 3589
+    drive_mode: 0  
+    range_min: 1125
+    range_max: 3737
     p_coefficient: 16
     i_coefficient: 0
     d_coefficient: 32
@@ -69,8 +69,8 @@ joints:
     id: 6
     homing_offset: 1530
     drive_mode: 0  # TODO: verify direction on the real joint before trusting this
-    range_min: 525
-    range_max: 1283
+    range_min: 2047
+    range_max: 3359
     p_coefficient: 16
     i_coefficient: 0
     d_coefficient: 32

@@ -13,9 +13,9 @@ parser.add_argument('--ranges-only', action='store_true',
 args = parser.parse_args()
 
 PORT = '/dev/ttyWaveshare'
-BAUD = 115200  # NOTE: the bridge itself runs at 1,000,000 baud -- double check this
-                # is intentional for your setup (e.g. a different bootloader stage)
-                # rather than stale from an earlier config.
+# BAUD = 115200  
+BAUD = 1000000  
+
 
 # Mapping of joint names to their physical servo IDs
 JOINTS = [
@@ -204,25 +204,29 @@ for joint in JOINTS:
     name = joint["name"]
     print(f"\n>>> Target Joint: {name.upper()} (ID {joint['id']})")
 
-    # Measure MIN limit
-    print(f"  1. Move '{name}' to its maximum safe NEGATIVE (MIN) limit.")
-    input("     Press [ENTER] when ready to capture MIN limit...")
-    min_val = read_raw_position(joint["id"])
-    while min_val is None:
+    # Capture two physical extremes -- direction (which one is "negative"/"positive")
+    # isn't established yet at this point in calibration, so don't assume the order
+    # you move the joint in tells you which is min vs max. Sort numerically instead.
+    print(f"  1. Move '{name}' to one of its two safe physical extremes.")
+    input("     Press [ENTER] when ready to capture this extreme...")
+    extreme_a = read_raw_position(joint["id"])
+    while extreme_a is None:
         print("     Error reading sensor. Trying again...")
         time.sleep(0.5)
-        min_val = read_raw_position(joint["id"])
-    print(f"     Captured MIN: {min_val} ticks")
+        extreme_a = read_raw_position(joint["id"])
+    print(f"     Captured: {extreme_a} ticks")
 
-    # Measure MAX limit
-    print(f"  2. Move '{name}' to its maximum safe POSITIVE (MAX) limit.")
-    input("     Press [ENTER] when ready to capture MAX limit...")
-    max_val = read_raw_position(joint["id"])
-    while max_val is None:
+    print(f"  2. Move '{name}' to its other safe physical extreme.")
+    input("     Press [ENTER] when ready to capture this extreme...")
+    extreme_b = read_raw_position(joint["id"])
+    while extreme_b is None:
         print("     Error reading sensor. Trying again...")
         time.sleep(0.5)
-        max_val = read_raw_position(joint["id"])
-    print(f"     Captured MAX: {max_val} ticks")
+        extreme_b = read_raw_position(joint["id"])
+    print(f"     Captured: {extreme_b} ticks")
+
+    min_val, max_val = sorted((extreme_a, extreme_b))
+    print(f"     -> range_min: {min_val}, range_max: {max_val}")
 
     range_limits[name] = {"min": min_val, "max": max_val}
 
