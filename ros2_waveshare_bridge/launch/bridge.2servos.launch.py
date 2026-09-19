@@ -1,0 +1,63 @@
+import os
+from ament_index_python.packages import get_package_share_directory
+from launch import LaunchDescription
+from launch.actions import DeclareLaunchArgument
+from launch.substitutions import LaunchConfiguration
+from launch_ros.actions import Node
+
+def generate_launch_description():
+    pkg_share = get_package_share_directory('ros2_waveshare_bridge')
+    
+    # Establish dynamic defaults located inside package share
+    default_urdf = os.path.join(pkg_share, 'urdf', 'two-servo-arm.urdf')
+    default_yaml = os.path.join(pkg_share, 'config', 'so-2servo.yaml')
+
+    return LaunchDescription([
+        # Declare command-line parameters allowing easy overrides
+        DeclareLaunchArgument(
+            'urdf_path',
+            default_value=default_urdf,
+            description='Absolute path to robot URDF file'
+        ),
+        DeclareLaunchArgument(
+            'joint_config_file',
+            default_value=default_yaml,
+            description='Path to calibration YAML file'
+        ),
+        DeclareLaunchArgument(
+            'port',
+            default_value='/dev/ttyWaveshare',
+            description='Serial port softlink'
+        ),
+        DeclareLaunchArgument(
+            'baud',
+            default_value='1000000',
+            description='Serial baud rate'
+        ),
+        DeclareLaunchArgument(
+            'enable_tick_logging',
+            default_value='false',
+            description='Enable verbose logging of raw servo encoder ticks for diagnostics'
+        ),
+        DeclareLaunchArgument(
+            'disable_torque',
+            default_value='false',
+            description='Turn off torque when booting robot'
+        ),
+
+        # Initialize the Node with parameter evaluations mapped
+        Node(
+            package='ros2_waveshare_bridge',
+            executable='bridge_node',
+            name='ros2_waveshare_bridge',
+            output='screen',
+            parameters=[{
+                'urdf_path': LaunchConfiguration('urdf_path'),
+                'joint_config_file': LaunchConfiguration('joint_config_file'),
+                'port': LaunchConfiguration('port'),
+                'baud': LaunchConfiguration('baud'),
+                'enable_tick_logging': LaunchConfiguration('enable_tick_logging'),
+                'disable_torque': LaunchConfiguration('disable_torque'),
+            }]
+        )
+    ])

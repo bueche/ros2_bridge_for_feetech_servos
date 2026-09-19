@@ -1,0 +1,32 @@
+# drive_mode: 0 = normal, 1 = inverted. Defaults to 0 (no inversion) for every
+# joint below. This is NOT yet verified against the physical robot -- test each
+# joint individually (command a small +rad move, watch which way it turns
+# relative to the URDF axis) and set drive_mode accordingly before relying on
+# trajectory control. This replaces the old servo_id-parity guess in the bridge
+# code, which did not correspond to anything physical.
+joints:
+  joint1:
+    id: 1
+    homing_offset: -1717
+    drive_mode: 0  
+    range_min: 948
+    range_max: 3026
+    p_coefficient: 16
+    i_coefficient: 0
+    d_coefficient: 32
+    return_delay_time: 0
+    acceleration: 254
+
+  joint2:
+    id: 2
+    homing_offset: 1663
+    drive_mode: 1  
+    range_min: 852
+    range_max: 3157
+    p_coefficient: 16
+    i_coefficient: 0
+    d_coefficient: 32
+    return_delay_time: 0
+    acceleration: 254
+
+  
