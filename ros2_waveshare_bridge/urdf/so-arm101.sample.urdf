@@ -76,7 +76,7 @@
  <ros2_control name="FeetechSystem" type="system">
   <hardware>
     <plugin>feetech_ros2_driver/FeetechHardwareInterface</plugin>
-    <param name="serial_port">/dev/ttyWaveshare</param>
+    <param name="usb_port">/dev/ttyWaveshare</param>
     <param name="baud_rate">1000000</param>
   </hardware>
 
