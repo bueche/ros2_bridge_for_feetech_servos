@@ -102,6 +102,7 @@
     <param name="id">3</param>
     <param name="type">sts</param>
     <param name="offset">-1787</param>
+    <param name="flipped">true</param>
     <command_interface name="position"/>
     <state_interface name="position"/>
     <state_interface name="velocity"/>
@@ -111,6 +112,7 @@
     <param name="id">4</param>
     <param name="type">sts</param>
     <param name="offset">-1566</param>
+    <param name="flipped">true</param>
     <command_interface name="position"/>
     <state_interface name="position"/>
     <state_interface name="velocity"/>
