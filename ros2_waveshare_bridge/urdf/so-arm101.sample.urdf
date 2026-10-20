@@ -73,5 +73,66 @@
     </ros2_control>
   </joint>
 
+ <ros2_control name="FeetechSystem" type="system">
+  <hardware>
+    <plugin>feetech_ros2_driver/FeetechSystem</plugin>
+    <param name="serial_port">/dev/ttyWaveshare</param>
+    <param name="baud_rate">1000000</param>
+  </hardware>
+
+  <joint name="shoulder_pan">
+    <param name="id">1</param>
+    <param name="type">sts</param>
+    <param name="offset">1717</param>
+    <command_interface name="position"/>
+    <state_interface name="position"/>
+    <state_interface name="velocity"/>
+  </joint>
+
+  <joint name="shoulder_lift">
+    <param name="id">2</param>
+    <param name="type">sts</param>
+    <param name="offset">-1663</param>
+    <command_interface name="position"/>
+    <state_interface name="position"/>
+    <state_interface name="velocity"/>
+  </joint>
+
+  <joint name="elbow_flex">
+    <param name="id">3</param>
+    <param name="type">sts</param>
+    <param name="offset">-1787</param>
+    <command_interface name="position"/>
+    <state_interface name="position"/>
+    <state_interface name="velocity"/>
+  </joint>
+
+  <joint name="wrist_flex">
+    <param name="id">4</param>
+    <param name="type">sts</param>
+    <param name="offset">-1566</param>
+    <command_interface name="position"/>
+    <state_interface name="position"/>
+    <state_interface name="velocity"/>
+  </joint>
+
+  <joint name="wrist_roll">
+    <param name="id">5</param>
+    <param name="type">sts</param>
+    <param name="offset">1829</param>
+    <command_interface name="position"/>
+    <state_interface name="position"/>
+    <state_interface name="velocity"/>
+  </joint>
+
+  <joint name="gripper">
+    <param name="id">6</param>
+    <param name="type">sts</param>
+    <param name="offset">-1530</param>
+    <command_interface name="position"/>
+    <state_interface name="position"/>
+    <state_interface name="velocity"/>
+  </joint>
+ </ros2_control>
 </robot>
 
