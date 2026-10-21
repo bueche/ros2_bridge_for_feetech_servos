@@ -1,6 +1,8 @@
 import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
+from launch.actions import RegisterEventHandler
+from launch.event_handlers import OnProcessStart
 from launch_ros.actions import Node
 
 def generate_launch_description():
@@ -32,20 +34,27 @@ def generate_launch_description():
     joint_state_broadcaster_spawner = Node(
         package='controller_manager',
         executable='spawner',
-        arguments=['joint_state_broadcaster', '--controller-manager', '/controller_manager'],
+        arguments=['joint_state_broadcaster', '--controller-manager', '/controller_manager', '--param-file', controllers_file],
         output='screen'
     )
 
     arm_controller_spawner = Node(
         package='controller_manager',
         executable='spawner',
-        arguments=['arm_controller', '--controller-manager', '/controller_manager'],
+        arguments=['arm_controller', '--controller-manager', '/controller_manager', '--param-file', controllers_file],
         output='screen'
+    )
+
+    # Delay spawner execution until ros2_control_node process starts cleanly
+    delay_spawners = RegisterEventHandler(
+        event_handler=OnProcessStart(
+            target_action=ros2_control_node,
+            on_start=[joint_state_broadcaster_spawner, arm_controller_spawner],
+        )
     )
 
     return LaunchDescription([
         robot_state_publisher,
         ros2_control_node,
-        joint_state_broadcaster_spawner,
-        arm_controller_spawner
+        delay_spawners
     ])
