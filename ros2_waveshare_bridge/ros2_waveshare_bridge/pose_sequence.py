@@ -17,7 +17,7 @@ from builtin_interfaces.msg import Duration
 from sensor_msgs.msg import JointState
 from feetech_interfaces.msg import FeetechState
 
-TRAJECTORY_TOPIC = '/joint_trajectory_controller/joint_trajectory'  # the waveshare bridge's subscription
+# TRAJECTORY_TOPIC = '/joint_trajectory_controller/joint_trajectory'  # the waveshare bridge's subscription
 DEFAULT_DURATION_SEC = 2      # used when a pose doesn't specify its own 'duration'
 POST_MOVE_PAUSE_SEC = 0.0     # matches the original script's fixed 2s pause after each move
 DEFAULT_JOINT_SPAN_RAD = 2 * math.pi  # fallback span if no joint_config_file is given
@@ -38,7 +38,9 @@ class PoseSequenceNode(Node):
         self.declare_parameter('pose_file', '')
         self.declare_parameter('joint_config_file', '')  # optional: enables a proper per-joint tolerance
         self.declare_parameter('deviation_threshold_fraction', 0.15)
+        self.declare_parameter('trajectory_topic', '/arm_controller/joint_trajectory')
 
+        trajectory_topic = self.get_parameter('trajectory_topic').get_parameter_value().string_value
         pose_file = self.get_parameter('pose_file').get_parameter_value().string_value
         joint_config_file = self.get_parameter('joint_config_file').get_parameter_value().string_value
         self.threshold_fraction = self.get_parameter('deviation_threshold_fraction').get_parameter_value().double_value
@@ -52,7 +54,8 @@ class PoseSequenceNode(Node):
         self.poses, self.joint_names = self.load_poses(pose_file)
         self.joint_span_rad = self.load_joint_spans(joint_config_file, self.joint_names)
 
-        self.publisher = self.create_publisher(JointTrajectory, TRAJECTORY_TOPIC, 10)
+        
+        self.publisher = self.create_publisher(JointTrajectory, trajectory_topic, 10)
 
         self.latest_positions = {}
         self.joint_state_sub = self.create_subscription(JointState, '/joint_states', self._on_joint_state, 10)
