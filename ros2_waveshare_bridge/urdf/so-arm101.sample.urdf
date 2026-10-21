@@ -82,6 +82,7 @@
 
   <joint name="shoulder_pan">
     <param name="id">1</param>
+    <param name="type">sts</param>
     <param name="homing_offset">1717</param>
     <command_interface name="position"/>
     <state_interface name="position"/>
@@ -90,6 +91,7 @@
 
   <joint name="shoulder_lift">
     <param name="id">2</param>
+    <param name="type">sts</param>
     <param name="homing_offset">-1663</param>
     <command_interface name="position"/>
     <state_interface name="position"/>
@@ -98,6 +100,7 @@
 
   <joint name="elbow_flex">
     <param name="id">3</param>
+    <param name="type">sts</param>
     <param name="homing_offset">-1787</param>
     <command_interface name="position"/>
     <state_interface name="position"/>
@@ -106,6 +109,7 @@
 
   <joint name="wrist_flex">
     <param name="id">4</param>
+    <param name="type">sts</param>
     <param name="homing_offset">-1566</param>
     <command_interface name="position"/>
     <state_interface name="position"/>
@@ -114,6 +118,7 @@
 
   <joint name="wrist_roll">
     <param name="id">5</param>
+    <param name="type">sts</param>
     <param name="homing_offset">1829</param>
     <command_interface name="position"/>
     <state_interface name="position"/>
@@ -122,6 +127,7 @@
 
   <joint name="gripper">
     <param name="id">6</param>
+    <param name="type">sts</param>
     <param name="homing_offset">-1530</param>
     <command_interface name="position"/>
     <state_interface name="position"/>
