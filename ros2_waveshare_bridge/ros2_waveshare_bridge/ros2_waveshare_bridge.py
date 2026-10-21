@@ -354,7 +354,9 @@ class Ros2WaveshareBridge(Node):
         raw_load = resp[9] | (resp[10] << 8)
         volt = resp[11]
         temp = resp[12]
-        raw_current = resp[18] | (resp[19] << 8)
+        # Present_Current (reg 69-70) is sign-magnitude, bit 15 = direction (Feetech SDK ReadCurrent).
+        raw_current = self.decode_sign_magnitude(resp[18] | (resp[19] << 8), 15)
+
 
         if self.log_ticks:
             self.get_logger().info(f"[DIAG] Servo ID {servo_id} -> Raw Ticks: {raw_ticks}, Raw Speed: {raw_speed}")
@@ -370,9 +372,7 @@ class Ros2WaveshareBridge(Node):
         temperature = float(temp)
         voltage = float(volt)
 
-        if raw_current > 32767:
-            raw_current -= 65536
-        current_ma = max(min(int(raw_current * 6.5), 32767), -32768)
+        current_ma = max(min(int(round(raw_current * 6.5)), 32767), -32768)
 
         if raw_load > 32767:
             raw_load -= 65536

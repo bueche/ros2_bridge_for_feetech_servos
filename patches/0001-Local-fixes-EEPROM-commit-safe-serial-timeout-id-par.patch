@@ -1,0 +1,63 @@
+From 54b8d417515f7ffff80716f575500575bdc4320e Mon Sep 17 00:00:00 2001
+From: Ed <ed.bueche64@gmail.com>
+Date: Wed, 21 Oct 2026 16:16:31 -0700
+Subject: [PATCH 1/2] Local fixes: EEPROM-commit-safe serial timeout, id/param
+ in config write errors
+
+---
+ feetech_driver/include/feetech_driver/serial_port.hpp | 4 +++-
+ src/feetech_ros2_driver.cpp                           | 9 ++++++---
+ 2 files changed, 9 insertions(+), 4 deletions(-)
+
+diff --git a/feetech_driver/include/feetech_driver/serial_port.hpp b/feetech_driver/include/feetech_driver/serial_port.hpp
+index 2b5d5ec..713b3b2 100644
+--- a/feetech_driver/include/feetech_driver/serial_port.hpp
++++ b/feetech_driver/include/feetech_driver/serial_port.hpp
+@@ -66,7 +66,9 @@ class SerialPort {
+  private:
+   [[nodiscard]] Result check_port() const noexcept;
+   std::string dev_;
+-  std::chrono::milliseconds timeout_ = std::chrono::milliseconds(5);
++  // Must exceed the servo's EEPROM commit time: a write that changes an EEPROM
++  // value is answered only after the commit, measured at up to ~41 ms (STS3215).
++  std::chrono::milliseconds timeout_ = std::chrono::milliseconds(60);
+   LibSerial::SerialPort port_;
+ };
+ }  // namespace feetech_driver
+diff --git a/src/feetech_ros2_driver.cpp b/src/feetech_ros2_driver.cpp
+index af7ecd7..108dae0 100644
+--- a/src/feetech_ros2_driver.cpp
++++ b/src/feetech_ros2_driver.cpp
+@@ -151,7 +151,8 @@ CallbackReturn FeetechHardwareInterface::configure_joints_(const JointIdConfigMa
+         const auto result = communication_protocol_->write(
+             joint_ids_[i], address, std::experimental::make_array(static_cast<uint8_t>(std::stoi(param_it->second))));
+         if (!result) {
+-          spdlog::error("FeetechHardwareInterface::configure_joints_ -> {}", result.error());
++          spdlog::error("FeetechHardwareInterface::configure_joints_ id={} param={} -> {}",
++                        joint_ids_[i], parameter_name, result.error());
+           return CallbackReturn::ERROR;
+         }
+       }
+@@ -167,7 +168,8 @@ CallbackReturn FeetechHardwareInterface::configure_joints_(const JointIdConfigMa
+         feetech_driver::to_sts(&buf[0], &buf[1], std::stoi(param_it->second));
+         const auto result = communication_protocol_->write(joint_ids_[i], address, buf);
+         if (!result) {
+-          spdlog::error("FeetechHardwareInterface::configure_joints_ -> {}", result.error());
++          spdlog::error("FeetechHardwareInterface::configure_joints_ id={} param={} -> {}",
++                        joint_ids_[i], parameter_name, result.error());
+           return CallbackReturn::ERROR;
+         }
+       }
+@@ -182,7 +184,8 @@ CallbackReturn FeetechHardwareInterface::configure_joints_(const JointIdConfigMa
+         feetech_driver::to_sts(&buf[0], &buf[1], value);
+         const auto result = communication_protocol_->write(joint_ids_[i], address, buf);
+         if (!result) {
+-          spdlog::error("FeetechHardwareInterface::configure_joints_ -> {}", result.error());
++          spdlog::error("FeetechHardwareInterface::configure_joints_ id={} param={} -> {}",
++                        joint_ids_[i], parameter_name, result.error());
+           return CallbackReturn::ERROR;
+         }
+       }
+-- 
+2.43.0
+
