@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """Measure how STS servos behave around an EEPROM write.
 
-For each servo: torque off, unlock EEPROM, then N times rewrite P_Coefficient
-(reg 21) with the value it already holds, measuring
+For each servo: torque off, unlock EEPROM, then N times write I_Coefficient
+(reg 23) alternating between 1 and 0, so every write is a real EEPROM change
+(rewriting an unchanged value may be skipped by the servo firmware), measuring
   reply_ms -- write() until the write's 6-byte status reply arrives
   busy_ms  -- after that reply, how long until the servo answers a
               Present_Position read again
-Then lock EEPROM. Torque is left OFF -- support the arm before running.
+Ends with I_Coefficient = 0 (the intended value), then locks EEPROM.
+Torque is left OFF -- support the arm before running.
 Run with nothing else on the port.
 
     python3 eeprom_write_timing.py [/dev/ttyWaveshare] [writes_per_servo]
@@ -20,7 +22,7 @@ import serial
 PORT = sys.argv[1] if len(sys.argv) > 1 else '/dev/ttyWaveshare'
 N = int(sys.argv[2]) if len(sys.argv) > 2 else 20
 IDS = [1, 2, 3, 4, 5, 6]
-REG_TORQUE, REG_LOCK, REG_P, REG_POS = 40, 55, 21, 56
+REG_TORQUE, REG_LOCK, REG_I, REG_POS = 40, 55, 23, 56
 GIVE_UP_S = 0.2
 DRIVER_TIMEOUT_MS = 5.0
 DRIVER_SETTLE_MS = 30.0
@@ -67,12 +69,12 @@ def busy_after(sid):
     return None
 
 
-print(f"{'id':>3} {'p':>3} {'reply med':>9} {'reply max':>9} {'>5ms':>5} {'no reply':>8} "
+print(f"{'id':>3} {'I0':>3} {'reply med':>9} {'reply max':>9} {'>5ms':>5} {'no reply':>8} "
       f"{'busy med':>8} {'busy max':>8} {'>30ms':>6}  (ms)")
 for sid in IDS:
-    p = read1(sid, REG_P)
+    p = read1(sid, REG_I)
     if p is None:
-        print(f"{sid:>3}  could not read P_Coefficient; skipping")
+        print(f"{sid:>3}  could not read I_Coefficient; skipping")
         continue
     write1(sid, REG_TORQUE, 0)
     time.sleep(0.05)
@@ -80,8 +82,8 @@ for sid in IDS:
     time.sleep(0.05)
 
     replies, busies, no_reply = [], [], 0
-    for _ in range(N):
-        ms, _ = write1(sid, REG_P, p)
+    for k in range(N):
+        ms, _ = write1(sid, REG_I, 1 if k % 2 == 0 else 0)
         if ms is None:
             no_reply += 1
         else:
@@ -91,6 +93,8 @@ for sid in IDS:
             busies.append(b)
         time.sleep(0.1)
 
+    write1(sid, REG_I, 0)
+    time.sleep(0.1)
     write1(sid, REG_LOCK, 1)
     time.sleep(0.1)
 
@@ -102,4 +106,5 @@ for sid in IDS:
           f"{fmt(busies, statistics.median)[1:]} {fmt(busies, max)[1:]} {long_busy:>6}")
 
 ser.close()
-print("EEPROM re-locked on all servos; torque left OFF.")
+print("I_Coefficient (reg 23) left at 0 and EEPROM re-locked on all servos; torque left OFF.\n"
+      "I0 column = reg 23 value before the test.")
