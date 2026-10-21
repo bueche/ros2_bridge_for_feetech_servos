@@ -1,14 +1,11 @@
-# drive_mode: 0 = normal, 1 = inverted. Defaults to 0 (no inversion) for every
-# joint below. This is NOT yet verified against the physical robot -- test each
-# joint individually (command a small +rad move, watch which way it turns
-# relative to the URDF axis) and set drive_mode accordingly before relying on
-# trajectory control. This replaces the old servo_id-parity guess in the bridge
-# code, which did not correspond to anything physical.
+# Single source of truth for servo calibration, read by both the waveshare bridge
+# (joint_config_file param) and feetech_ros2_driver (joint_config_file hardware param).
+# No drive_mode: the driver does not support it, so every joint uses
+# rad = (ticks - 2048) * pi/2048 and direction is expressed by the URDF <axis>.
 joints:
   shoulder_pan:
     id: 1
     homing_offset: -1717
-    drive_mode: 0  
     range_min: 948
     range_max: 3026
     p_coefficient: 16
@@ -20,7 +17,6 @@ joints:
   shoulder_lift:
     id: 2
     homing_offset: 1663
-    drive_mode: 1  
     range_min: 852
     range_max: 3157
     p_coefficient: 16
@@ -32,7 +28,6 @@ joints:
   elbow_flex:
     id: 3
     homing_offset: 1787
-    drive_mode: 1  
     range_min: 853
     range_max: 2950
     p_coefficient: 16
@@ -44,7 +39,6 @@ joints:
   wrist_flex:
     id: 4
     homing_offset: 1566
-    drive_mode: 1  
     range_min: 886
     range_max: 3206
     p_coefficient: 16
@@ -56,7 +50,6 @@ joints:
   wrist_roll:
     id: 5
     homing_offset: -1829
-    drive_mode: 0  
     range_min: 1125
     range_max: 3737
     p_coefficient: 16
@@ -68,7 +61,6 @@ joints:
   gripper:
     id: 6
     homing_offset: 1530
-    drive_mode: 0  # TODO: verify direction on the real joint before trusting this
     range_min: 2047
     range_max: 3359
     p_coefficient: 16
