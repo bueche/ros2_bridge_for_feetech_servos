@@ -10,6 +10,7 @@ controller_manager:
 
 arm_controller:
   ros__parameters:
+    type: position_controllers/JointGroupPositionController
     joints:
       - shoulder_pan
       - shoulder_lift
