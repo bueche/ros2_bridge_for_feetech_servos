@@ -278,8 +278,8 @@ class Ros2WaveshareBridge(Node):
                 if 'range_min' in cfg: verify_and_flash(9, cfg['range_min'], 2, "Min Angle Limit", target_mem_is_eeprom=True)
                 if 'range_max' in cfg: verify_and_flash(11, cfg['range_max'], 2, "Max Angle Limit", target_mem_is_eeprom=True)
                 if 'p_coefficient' in cfg: verify_and_flash(21, cfg['p_coefficient'], 1, "P Gain", target_mem_is_eeprom=True)
-                if 'i_coefficient' in cfg: verify_and_flash(22, cfg['i_coefficient'], 1, "I Gain", target_mem_is_eeprom=True)
-                if 'd_coefficient' in cfg: verify_and_flash(23, cfg['d_coefficient'], 1, "D Gain", target_mem_is_eeprom=True)
+                if 'i_coefficient' in cfg: verify_and_flash(23, cfg['i_coefficient'], 1, "I Gain", target_mem_is_eeprom=True)
+                if 'd_coefficient' in cfg: verify_and_flash(22, cfg['d_coefficient'], 1, "D Gain", target_mem_is_eeprom=True)
                 if 'return_delay_time' in cfg: verify_and_flash(7, cfg['return_delay_time'], 1, "Return Delay", target_mem_is_eeprom=True)
                 if 'acceleration' in cfg:     verify_and_flash(41, cfg['acceleration'], 1, "Acceleration", target_mem_is_eeprom=False)
             except Exception as e:
