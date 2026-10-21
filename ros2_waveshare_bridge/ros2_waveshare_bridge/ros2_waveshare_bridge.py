@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import rclpy
 from rclpy.node import Node
+from rclpy.time import Time
 from trajectory_msgs.msg import JointTrajectory
 from sensor_msgs.msg import JointState
 from feetech_interfaces.msg import FeetechState
@@ -24,6 +25,11 @@ class Ros2WaveshareBridge(Node):
         self.declare_parameter('joint_config_file', '')
         self.declare_parameter('enable_tick_logging', False) # Diagnostic Flag
         self.declare_parameter('disable_torque', False) # Calibration Flag: keep torque off at boot instead of the normal on-at-boot behavior
+        # Message-compatibility with the ros2_control stack (JointTrajectoryController named
+        # 'arm_controller' + joint_state_broadcaster). Defaults match controllers.yaml.
+        self.declare_parameter('trajectory_topic', '/arm_controller/joint_trajectory')
+        self.declare_parameter('command_rate_hz', 50.0)    # matches controller_manager update_rate
+        self.declare_parameter('telemetry_rate_hz', 4.0)
         
         port = self.get_parameter('port').get_parameter_value().string_value
         baud = self.get_parameter('baud').get_parameter_value().integer_value
@@ -31,6 +37,9 @@ class Ros2WaveshareBridge(Node):
         yaml_path = self.get_parameter('joint_config_file').get_parameter_value().string_value
         self.log_ticks = self.get_parameter('enable_tick_logging').get_parameter_value().bool_value
         self.disable_torque = self.get_parameter('disable_torque').get_parameter_value().bool_value
+        trajectory_topic = self.get_parameter('trajectory_topic').get_parameter_value().string_value
+        command_rate_hz = self.get_parameter('command_rate_hz').get_parameter_value().double_value
+        telemetry_rate_hz = self.get_parameter('telemetry_rate_hz').get_parameter_value().double_value
         
         self.get_logger().info(f"URDF path =: '{urdf_path}'.")
         
@@ -38,6 +47,11 @@ class Ros2WaveshareBridge(Node):
         self.joint_names = []
         self.active_ids = []
         self.servo_configs = {}
+
+        # Trajectory execution state
+        self.active_traj = None   # trajectory currently being interpolated, or None when holding
+        self.last_cmd = {}        # joint -> last commanded rad (interpolation start, like JTC)
+        self.last_meas = {}       # joint -> last measured rad (fallback start before any command)
 
         # 1. Autonomously Parse URDF Target Layout
         if urdf_path and os.path.exists(urdf_path):
@@ -69,12 +83,16 @@ class Ros2WaveshareBridge(Node):
 
         # Publishers & Subscribers
         self.trajectory_sub = self.create_subscription(
-            JointTrajectory, '/joint_trajectory_controller/joint_trajectory', self.trajectory_callback, 10
+            JointTrajectory, trajectory_topic, self.trajectory_callback, 10
         )
         self.feetech_state_pub = self.create_publisher(FeetechState, '/feetech_state', 10)
         self.joint_state_pub = self.create_publisher(JointState, '/joint_states', 10)
         
-        self.telemetry_timer = self.create_timer(0.25, self.query_telemetry_callback)
+        self.telemetry_timer = self.create_timer(1.0 / telemetry_rate_hz, self.query_telemetry_callback)
+        self.command_timer = self.create_timer(1.0 / command_rate_hz, self.command_timer_callback)
+        self.get_logger().info(
+            f"Listening for trajectories on '{trajectory_topic}'. "
+            f"Command rate {command_rate_hz:.1f} Hz, telemetry rate {telemetry_rate_hz:.1f} Hz.")
 
     def parse_urdf_file(self, path):
         try:
@@ -291,11 +309,12 @@ class Ros2WaveshareBridge(Node):
         return buffer if len(buffer) == num_bytes else buffer
 
     def radians_to_ticks(self, rad, servo_id):
+        # round(), not int(): int() truncates and biases every command by up to one tick.
         inverted = self.servo_configs.get(servo_id, {}).get('drive_mode', 0) == 1
         if inverted:
-            ticks = int(2048 - (rad * (2048.0 / math.pi)))
+            ticks = int(round(2048 - (rad * (2048.0 / math.pi))))
         else:
-            ticks = int(2048 + (rad * (2048.0 / math.pi)))
+            ticks = int(round(2048 + (rad * (2048.0 / math.pi))))
         return max(min(ticks, 4095), 0)
 
     def waveshare_ticks_to_radians(self, ticks, servo_id):
@@ -303,6 +322,13 @@ class Ros2WaveshareBridge(Node):
         if inverted:
             return (2048 - ticks) * (math.pi / 2048.0)
         return (ticks - 2048) * (math.pi / 2048.0)
+
+    def ticks_per_sec_to_rad_per_sec(self, ticks_per_sec, servo_id):
+        # Same scale and drive_mode sign convention as waveshare_ticks_to_radians,
+        # minus the 2048 center (velocity has no offset).
+        inverted = self.servo_configs.get(servo_id, {}).get('drive_mode', 0) == 1
+        rad_s = ticks_per_sec * (math.pi / 2048.0)
+        return -rad_s if inverted else rad_s
 
     def decode_error_byte(self, err_byte):
         # Bit layout per Feetech's documented status byte (cross-referenced against
@@ -322,13 +348,16 @@ class Ros2WaveshareBridge(Node):
         # Present_Position is sign-magnitude (bit 15 = sign), used for multi-turn
         # values that go negative -- NOT two's complement.
         raw_ticks = self.decode_sign_magnitude(resp[5] | (resp[6] << 8), 15)
+        # Present_Speed (reg 58-59) is already inside this read: sign-magnitude,
+        # bit 15 = sign, units of steps/s on the STS series.
+        raw_speed = self.decode_sign_magnitude(resp[7] | (resp[8] << 8), 15)
         raw_load = resp[9] | (resp[10] << 8)
         volt = resp[11]
         temp = resp[12]
         raw_current = resp[18] | (resp[19] << 8)
 
         if self.log_ticks:
-            self.get_logger().info(f"[DIAG] Servo ID {servo_id} -> Raw Ticks: {raw_ticks}")
+            self.get_logger().info(f"[DIAG] Servo ID {servo_id} -> Raw Ticks: {raw_ticks}, Raw Speed: {raw_speed}")
 
         if hw_state != 0:
             flags = self.decode_error_byte(hw_state)
@@ -336,6 +365,7 @@ class Ros2WaveshareBridge(Node):
 
         single_turn_ticks = raw_ticks % 4096
         position_rad = self.waveshare_ticks_to_radians(single_turn_ticks, servo_id)
+        velocity_rad_s = self.ticks_per_sec_to_rad_per_sec(raw_speed, servo_id)
 
         temperature = float(temp)
         voltage = float(volt)
@@ -356,6 +386,7 @@ class Ros2WaveshareBridge(Node):
 
         return {
             'position': position_rad,
+            'velocity': velocity_rad_s,
             'temperature': temperature,
             'voltage': voltage,
             'current': current_ma,
@@ -388,7 +419,7 @@ class Ros2WaveshareBridge(Node):
         joint_msg.header.stamp = now
         joint_msg.name = self.joint_names
 
-        positions_rad = []
+        positions_rad, velocities = [], []
         temps, volts, currents, loads = [], [], [], []
         success_count = 0
 
@@ -398,6 +429,7 @@ class Ros2WaveshareBridge(Node):
                 data = self.decode_telemetry_packet(resp, servo_id)
                 if data is not None:
                     positions_rad.append(data['position'])
+                    velocities.append(data['velocity'])
                     temps.append(int(data['temperature']))
                     volts.append(int(data['voltage']))
                     currents.append(data['current'])
@@ -407,13 +439,17 @@ class Ros2WaveshareBridge(Node):
                 else:
                     feetech_msg.comm_state = FeetechState.COMM_STATE_ITEM_READ_FAIL
                     positions_rad.append(0.0)
+                    velocities.append(0.0)
                     temps.append(0); volts.append(0); currents.append(0); loads.append(0)
 
         if success_count == len(self.active_ids):
             joint_msg.position = positions_rad
-            joint_msg.velocity = [0.0] * len(self.joint_names)
-            joint_msg.effort = [float(load_eff) for load_eff in loads]
+            joint_msg.velocity = velocities
+            # No effort field: the feetech_ros2_driver exports only position and velocity
+            # state interfaces, and Present_Load (0.1% units) is not an effort anyway.
+            # Load is still published in /feetech_state.
             self.joint_state_pub.publish(joint_msg)
+            self.last_meas = dict(zip(self.joint_names, positions_rad))
 
         feetech_msg.present_temperature = temps
         feetech_msg.present_input_voltage = volts
@@ -422,31 +458,85 @@ class Ros2WaveshareBridge(Node):
         self.feetech_state_pub.publish(feetech_msg)
 
     def trajectory_callback(self, msg):
+        # Validates and stores the goal; command_timer_callback does the bus writes.
         if not msg.points:
             return
-        target_point = msg.points[-1]
-        with self.serial_lock:
-            for index, joint_name in enumerate(msg.joint_names):
-                if joint_name in self.joint_map:
-                    servo_id = self.joint_map[joint_name]
-                    pos_ticks = self.radians_to_ticks(target_point.positions[index], servo_id)
-                    
-                    # Outbound position targets mapped as Little-Endian
-                    val_l = pos_ticks & 0xFF
-                    val_h = (pos_ticks >> 8) & 0xFF
-                    
-                    packet = bytearray([0xFF, 0xFF, servo_id, 0x05, 0x03, 42, val_l, val_h])
-                    packet.append(self.calculate_checksum(packet))
-                    try:
-                        self.ser.write(packet)
-                        self.ser.flush()
-                        time.sleep(0.003)  # settle time between packets on this half-duplex,
-                                           # single-wire daisy chain -- every other multi-write
-                                           # sequence in this file has one; this loop was the
-                                           # one place that didn't, and back-to-back writes with
-                                           # zero gap risk one packet getting garbled on the bus.
-                    except Exception as e:
-                        self.get_logger().error(f"Write error: {e}")
+        # Match JTC defaults: reject unknown joints and partial goals instead of silently ignoring them.
+        if set(msg.joint_names) != set(self.joint_names):
+            self.get_logger().error(
+                f"Rejecting trajectory: joints {list(msg.joint_names)} do not match {self.joint_names}")
+            return
+
+        start = []
+        for j in self.joint_names:
+            if j in self.last_cmd:
+                start.append(self.last_cmd[j])
+            elif j in self.last_meas:
+                start.append(self.last_meas[j])
+            else:
+                self.get_logger().error("Rejecting trajectory: no position feedback received yet")
+                return
+
+        # Reorder every point into self.joint_names order once, here.
+        names = list(msg.joint_names)
+        idx = [names.index(j) for j in self.joint_names]
+        points = []
+        for p in msg.points:
+            if len(p.positions) != len(names):
+                self.get_logger().error("Rejecting trajectory: a point's positions length does not match joint_names")
+                return
+            t = p.time_from_start.sec + p.time_from_start.nanosec * 1e-9
+            points.append((t, [p.positions[i] for i in idx]))
+
+        # JTC semantics: a zero header stamp means "start now".
+        stamp = Time.from_msg(msg.header.stamp)
+        t0 = self.get_clock().now() if stamp.nanoseconds == 0 else stamp
+
+        # A new goal replaces any in-progress one, starting from the last setpoint.
+        self.active_traj = {'t0': t0, 'start': start, 'points': points}
+
+    def command_timer_callback(self):
+        traj = self.active_traj
+        if traj is None or not self.ser or not self.ser.is_open:
+            return
+        elapsed = (self.get_clock().now() - traj['t0']).nanoseconds * 1e-9
+        if elapsed < 0:
+            return  # future-stamped goal, wait for it
+
+        # Piecewise-linear interpolation across all points (JTC's behavior for position-only points).
+        prev_t, prev_pos = 0.0, traj['start']
+        target = None
+        for t, pos in traj['points']:
+            if elapsed < t:
+                a = (elapsed - prev_t) / (t - prev_t) if t > prev_t else 1.0
+                target = [p0 + a * (p1 - p0) for p0, p1 in zip(prev_pos, pos)]
+                break
+            prev_t, prev_pos = t, pos
+        if target is None:
+            target = traj['points'][-1][1]
+            self.active_traj = None  # done; servos hold the final goal
+
+        self.sync_write_goal_positions(target)
+        self.last_cmd = dict(zip(self.joint_names, target))
+
+    def sync_write_goal_positions(self, positions_rad):
+        # SYNC WRITE (0x83) to broadcast ID 0xFE: one packet sets Goal_Position
+        # (reg 42, 2 bytes) on every servo, and no servo replies. Replaces the
+        # six individual writes + settle sleeps, which would not fit in a 20 ms cycle.
+        # Length field = (data_len + 1) * N + 4.
+        params = bytearray([42, 2])
+        for joint_name, rad in zip(self.joint_names, positions_rad):
+            servo_id = self.joint_map[joint_name]
+            ticks = self.radians_to_ticks(rad, servo_id)
+            params += bytes([servo_id, ticks & 0xFF, (ticks >> 8) & 0xFF])
+        packet = bytearray([0xFF, 0xFF, 0xFE, len(params) + 2, 0x83]) + params
+        packet.append(self.calculate_checksum(packet))
+        try:
+            with self.serial_lock:
+                self.ser.write(packet)
+                self.ser.flush()
+        except Exception as e:
+            self.get_logger().error(f"Sync write error: {e}")
 
     def destroy_node(self):
         # Always torque off on the way out, regardless of the disable_torque flag --

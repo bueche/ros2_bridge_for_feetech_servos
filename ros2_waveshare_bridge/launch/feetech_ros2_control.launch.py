@@ -19,35 +19,27 @@ def generate_launch_description():
         parameters=[{'robot_description': robot_desc}]
     )
 
+    # robot_description comes from robot_state_publisher's topic; only the
+    # controller config is passed here.
     ros2_control_node = Node(
         package='controller_manager',
         executable='ros2_control_node',
-        parameters=[
-            {'robot_description': robot_desc},
-            controllers_file
-        ],
-        output='screen'
-    )
-
-    joint_state_broadcaster_spawner = Node(
-        package='controller_manager',
-        executable='spawner',
-        arguments=['joint_state_broadcaster', '--controller-manager', '/controller_manager'],
         parameters=[controllers_file],
         output='screen'
     )
 
-    arm_controller_spawner = Node(
+    # One spawner, controllers activated in order. Controller params come from
+    # controllers.yaml via the controller_manager, so the spawner needs none.
+    controller_spawner = Node(
         package='controller_manager',
         executable='spawner',
-        arguments=['arm_controller', '--controller-manager', '/controller_manager'],
-        parameters=[controllers_file],
+        arguments=['joint_state_broadcaster', 'arm_controller',
+                   '--controller-manager', '/controller_manager'],
         output='screen'
     )
 
     return LaunchDescription([
         robot_state_publisher,
         ros2_control_node,
-        joint_state_broadcaster_spawner,
-        arm_controller_spawner
+        controller_spawner,
     ])
