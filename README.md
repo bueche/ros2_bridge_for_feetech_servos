@@ -8,6 +8,8 @@ These include:
 
 2. *ros2 bridge*: This approach is a bare-bones ros2 bridge for as waveshare controller and feetech servos. It does not integrate with ros2_control (it is written in python) but follows the same pattern for setting parameters and publishing topcis. Its development was motivated by Certain waveshare controllers for the servos have timing issues with the feetech driver. This is a replacement repository for the feetech_ros2_driver for those of developers who run into bandwidth or timing issues.
 
+These two approaches are mutually exclusive in that you can only run one or the other but not both at the same time.
+
 ## Feetech Controllers
 TODO: describe the two different types of controllers.
 
@@ -122,6 +124,8 @@ Summary: 2 packages finished [13.4s]
 [spawner-3] [INFO] [1792626424.322436176] [spawner_joint_state_broadcaster]: Configured and activated arm_controller
 ```
 ## launch the bridge
+
+Note: the feetech_ros2_driver ros2_control approach needs to be shutdown before launching this bridge. The two approaches are multually exclusive wrt to their runtimes.
 
 ```
 ~/waveshare_jazzy_ws$ source ./install/setup.bash
@@ -242,3 +246,66 @@ effort:
 ---
 ```
 
+## Running a pose sequence test
+
+```
+~/waveshare_jazzy_ws$ ros2 run ros2_waveshare_bridge pose_sequence --ros-args -p pose_file:=src/ros2_waveshare_bridge/config/sample.poses.yaml
+[WARN] [1792626632.994642699] [pose_sequence_node]: No joint_config_file provided -- the deviation check will use a coarse default span of 6.28 rad (full single-turn range) for every joint, rather than each joint's real calibrated range. Pass joint_config_file:=<path to your so-arm101.yaml> for a tighter, per-joint tolerance.
+[INFO] [1792626633.053228913] [pose_sequence_node]: Pose Sequence Node initialized
+[INFO] [1792626633.053912381] [pose_sequence_node]: Loaded 8 poses from src/ros2_waveshare_bridge/config/sample.poses.yaml
+[INFO] [1792626633.054687664] [pose_sequence_node]: Joint order: ['shoulder_pan', 'shoulder_lift', 'elbow_flex', 'wrist_flex', 'wrist_roll', 'gripper']
+[WARN] [1792626633.055398446] [pose_sequence_node]: Make sure these joint names match your URDF/bridge joint names exactly -- the bridge silently ignores any joint name it does not recognize.
+[INFO] [1792626633.055856709] [pose_sequence_node]: Starting pose sequence...
+[INFO] [1792626633.056384342] [pose_sequence_node]: 
+==================================================
+[INFO] [1792626633.056864938] [pose_sequence_node]: Moving to pose 1 - poised to work (1/8)
+[INFO] [1792626633.057375663] [pose_sequence_node]: Positions: ['-0.054', '-0.011', '0.581', '0.862', '-0.155', '-0.002']
+[INFO] [1792626633.058340559] [pose_sequence_node]: Published trajectory, duration: 2s
+[INFO] [1792626633.058956156] [pose_sequence_node]: Waiting 2.0s (movement + 0.0s pause)... watching for hardware errors as they happen
+[INFO] [1792626636.081359265] [pose_sequence_node]: 
+==================================================
+[INFO] [1792626636.082189123] [pose_sequence_node]: Moving to pose 2 - reach to grab (2/8)
+[INFO] [1792626636.082987202] [pose_sequence_node]: Positions: ['-0.005', '0.006', '-0.209', '0.255', '-0.781', '-0.002']
+[INFO] [1792626636.084171914] [pose_sequence_node]: Published trajectory, duration: 2s
+[INFO] [1792626636.085073846] [pose_sequence_node]: Waiting 2.0s (movement + 0.0s pause)... watching for hardware errors as they happen
+[INFO] [1792626639.120780084] [pose_sequence_node]: 
+==================================================
+[INFO] [1792626639.121574682] [pose_sequence_node]: Moving to pose 3 - grab (3/8)
+[INFO] [1792626639.122348705] [pose_sequence_node]: Positions: ['-0.281', '1.054', '-0.431', '-0.765', '-0.782', '-0.002']
+[INFO] [1792626639.123444268] [pose_sequence_node]: Published trajectory, duration: 2s
+[INFO] [1792626639.124281626] [pose_sequence_node]: Waiting 2.0s (movement + 0.0s pause)... watching for hardware errors as they happen
+[INFO] [1792626642.140815770] [pose_sequence_node]: 
+==================================================
+[INFO] [1792626642.141425681] [pose_sequence_node]: Moving to pose 4 - lift and center (4/8)
+[INFO] [1792626642.142035889] [pose_sequence_node]: Positions: ['-0.282', '1.071', '-0.436', '-0.765', '-0.781', '0.950']
+[INFO] [1792626642.142913025] [pose_sequence_node]: Published trajectory, duration: 2s
+[INFO] [1792626642.143563029] [pose_sequence_node]: Waiting 2.0s (movement + 0.0s pause)... watching for hardware errors as they happen
+[INFO] [1792626645.160844197] [pose_sequence_node]: 
+==================================================
+[INFO] [1792626645.161659184] [pose_sequence_node]: Moving to pose 5 - raise and get ready to place (5/8)
+[INFO] [1792626645.162497875] [pose_sequence_node]: Positions: ['0.143', '1.040', '-0.008', '-1.049', '0.014', '0.552']
+[INFO] [1792626645.163665790] [pose_sequence_node]: Published trajectory, duration: 2s
+[INFO] [1792626645.164550389] [pose_sequence_node]: Waiting 2.0s (movement + 0.0s pause)... watching for hardware errors as they happen
+[INFO] [1792626648.181321960] [pose_sequence_node]: 
+==================================================
+[INFO] [1792626648.182150262] [pose_sequence_node]: Moving to pose 6 - place high (6/8)
+[INFO] [1792626648.182959175] [pose_sequence_node]: Positions: ['0.143', '1.048', '-0.006', '-1.049', '0.017', '-0.014']
+[INFO] [1792626648.184149350] [pose_sequence_node]: Published trajectory, duration: 2s
+[INFO] [1792626648.185031744] [pose_sequence_node]: Waiting 2.0s (movement + 0.0s pause)... watching for hardware errors as they happen
+[INFO] [1792626651.201590129] [pose_sequence_node]: 
+==================================================
+[INFO] [1792626651.202416190] [pose_sequence_node]: Moving to pose 7 - reach to grab again (7/8)
+[INFO] [1792626651.203248196] [pose_sequence_node]: Positions: ['0.357', '-0.216', '-0.155', '0.411', '-1.712', '0.494']
+[INFO] [1792626651.204402500] [pose_sequence_node]: Published trajectory, duration: 2s
+[INFO] [1792626651.205294691] [pose_sequence_node]: Waiting 2.0s (movement + 0.0s pause)... watching for hardware errors as they happen
+[INFO] [1792626654.240865391] [pose_sequence_node]: 
+==================================================
+[INFO] [1792626654.241690619] [pose_sequence_node]: Moving to pose 8 - poised to work or shutdown (8/8)
+[INFO] [1792626654.242482976] [pose_sequence_node]: Positions: ['-0.054', '-0.011', '0.581', '0.862', '-0.155', '-0.002']
+[INFO] [1792626654.243606724] [pose_sequence_node]: Published trajectory, duration: 2s
+[INFO] [1792626654.244519397] [pose_sequence_node]: Waiting 2.0s (movement + 0.0s pause)... watching for hardware errors as they happen
+[INFO] [1792626657.260908873] [pose_sequence_node]: 
+==================================================
+[INFO] [1792626657.261887139] [pose_sequence_node]: Pose sequence complete!
+[INFO] [1792626657.262801627] [pose_sequence_node]: All poses executed successfully.
+```
