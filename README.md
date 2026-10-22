@@ -1,20 +1,24 @@
-# ROS2 Bridge for Waveshare controller and Feetech/Waveshare Servos
+# ROS2 Bridge for Feetech/Waveshare Servos
 
 ## Summary
-The following repository has a bare-bones ros2 bridge for the waveshare controller and feetech servos. This is a replacement repository for the [feetech_ros2_driver](https://github.com/ros-physical-ai/feetech_ros2_driver) for those of us who could not get it working (see [here](https://github.com/ros-physical-ai/feetech_ros2_driver/issues/29)). 
+The following repository illustrates two different approaches of intergrating [feetech servos](https://www.amazon.com/s?k=feetech+servo) into [ROS2](https://www.ros.org). It also contains various tools for working with the feetech servos and diagnosing issues with the feetech driver.
 
-It takes a different approach that is perhaps a little less tempermental with the underlying hardware as it is 100% python based (excluding the firmware, that is). This means it will give up a little on latency but should be quite sufficient for most applications (e.g., https://github.com/bueche/ros2_robot_arm).
+These include:
+1. [feetech_ros2_driver](https://github.com/ros-physical-ai/feetech_ros2_driver): This is an open source integration that uses ros2_control as the integration point. In this repository we also expand the telemetry by patching that driver to support the publishing of metrics like current, voltage, temperature, and load.
 
-This will be more thoroughly tested in the next few weeks. Log any issues you find.
+2. *ros2 bridge*: This approach is a bare-bones ros2 bridge for as waveshare controller and feetech servos. It does not integrate with ros2_control (it is written in python) but follows the same pattern for setting parameters and publishing topcis. Its development was motivated by Certain waveshare controllers for the servos have timing issues with the feetech driver. This is a replacement repository for the feetech_ros2_driver for those of developers who run into bandwidth or timing issues.
+
+## Feetech Controllers
+TODO: describe the two different types of controllers.
 
 ## Features
-1. Able to set the positions of the servos using radians using joint trajectory topic. Compatible with the Dynamixel servos on ros2 control. Note that ros2_control should ***not** be running.
-2. Able to collect positions of the servos using the joint state topic. also compatible with Dynamixel servos and control integration. 
-3. Able to collect advanced servo state that is compatible with the dynamixel servos for temperature, current, voltage, and load. This includes Dynamixel approach to direction (e.g. negaative current and load)
-4. able to set internal Feetech PID tuning values in a manner that is compatible with the `feetech_ros2_driver`.
+1. Ability to set the positions of the servos using radians using joint trajectory topic. Compatible with the Dynamixel servos on ros2 control.
+2. Ability to collect positions of the servos using the joint state topic. Also compatible with Dynamixel servos and control integration. 
+3. Ability to collect advanced servo state that is compatible with the dynamixel servos for temperature, current, voltage, and load. This includes Dynamixel approach to direction (e.g. negaative current and load).
 
 ## Contents
-The contents of this repository include:
+
+The contents of this repository include ros2 launch or related software. In addition there tools which might operate independently of the ros2 framework.
 
 - [`ros2_waveshare_bridge.py`](./ros2_waveshare_bridge/ros2_waveshare_bridge/ros2_waveshare_bridge.py): This is the main controller. It has a few parameters which include a path to your robots urdf file. It subscribes to topics like `JointTrajectory`, `JointState`, and `FeetechState` and then translates these topics into the corresponding Feetech servo commands and passes the results back to the ros2 nodes that issued the topic requests.
 
@@ -28,6 +32,7 @@ The contents of this repository include:
 
 - [`set_servo_id.ino`](./firmware/set_servo_id.ino): script to set the servo id. From the factory they are set with 1. 
 
+## 
 ## Installation
 
 ```
@@ -63,6 +68,59 @@ Summary: 2 packages finished [13.4s]
 
 ```
 
+## launch ROS2 with ros2_control and feetech_ros2_driver
+
+```
+~/waveshare_jazzy_ws$ source ./install/setup.bash
+~/waveshare_jazzy_ws$ ros2 launch ros2_waveshare_bridge feetech_ros2_control.launch.py
+[INFO] [launch]: All log files can be found below /home/ubuntu/.ros/log/2026-10-21-23-47-03-367339-bueche-rpi5-7558
+[INFO] [launch]: Default logging verbosity is set to INFO
+[INFO] [robot_state_publisher-1]: process started with pid [7561]
+[INFO] [ros2_control_node-2]: process started with pid [7562]
+[INFO] [spawner-3]: process started with pid [7563]
+[robot_state_publisher-1] [INFO] [1792626423.529363666] [robot_state_publisher]: Robot initialized
+[ros2_control_node-2] [INFO] [1792626423.548076312] [controller_manager]: Using Steady (Monotonic) clock for triggering controller manager cycles.
+[ros2_control_node-2] [INFO] [1792626423.553602720] [controller_manager]: Subscribing to '/robot_description' topic for robot description.
+[ros2_control_node-2] [INFO] [1792626423.556671575] [controller_manager]: update rate is 50 Hz
+[ros2_control_node-2] [INFO] [1792626423.556723556] [controller_manager]: Overruns handling is : enabled
+[ros2_control_node-2] [INFO] [1792626423.556738464] [controller_manager]: Spawning controller_manager RT thread with scheduler priority: 50
+[ros2_control_node-2] [WARN] [1792626423.556871780] [controller_manager]: Could not enable FIFO RT scheduling policy: with error number <1>(Operation not permitted). See [https://control.ros.org/master/doc/ros2_control/controller_manager/doc/userdoc.html] for details on how to enable realtime scheduling.
+[ros2_control_node-2] [INFO] [1792626423.558418660] [controller_manager]: Received robot description from topic.
+[ros2_control_node-2] [INFO] [1792626423.562559059] [controller_manager]: Loading hardware 'FeetechSystem' 
+[ros2_control_node-2] [INFO] [1792626423.566873755] [controller_manager]: Loaded hardware 'FeetechSystem' from plugin 'feetech_ros2_driver/FeetechHardwareInterface'
+[ros2_control_node-2] [INFO] [1792626423.567043386] [controller_manager]: Initialize hardware 'FeetechSystem' 
+[ros2_control_node-2] [2026-10-21 23:47:03.572] [info] Connecting to port: /dev/ttyWaveshare
+[ros2_control_node-2] [2026-10-21 23:47:03.576] [info] Loaded joint configuration for 6 joints from '/home/ubuntu/waveshare_jazzy_ws/install/ros2_waveshare_bridge/share/ros2_waveshare_bridge/config/so-arm101.yaml'
+[ros2_control_node-2] [2026-10-21 23:47:03.618] [info] Publishing FeetechState on '/feetech_state'
+[ros2_control_node-2] [INFO] [1792626423.618340994] [controller_manager]: Successful initialization of hardware 'FeetechSystem'
+[ros2_control_node-2] [INFO] [1792626423.619158000] [resource_manager]: 'configure' hardware 'FeetechSystem' 
+[ros2_control_node-2] [INFO] [1792626423.619178481] [resource_manager]: Successful 'configure' of hardware 'FeetechSystem'
+[ros2_control_node-2] [INFO] [1792626423.619189204] [resource_manager]: 'activate' hardware 'FeetechSystem' 
+[ros2_control_node-2] [INFO] [1792626423.621493071] [resource_manager]: Successful 'activate' of hardware 'FeetechSystem'
+[ros2_control_node-2] [INFO] [1792626423.621618368] [controller_manager]: Registering statistics for : FeetechSystem
+[ros2_control_node-2] [INFO] [1792626423.621808870] [controller_manager]: Resource Manager has been successfully initialized. Starting Controller Manager services...
+[ros2_control_node-2] [INFO] [1792626424.126282081] [controller_manager]: Loading controller : 'joint_state_broadcaster' of type 'joint_state_broadcaster/JointStateBroadcaster'
+[ros2_control_node-2] [INFO] [1792626424.126338156] [controller_manager]: Loading controller 'joint_state_broadcaster'
+[ros2_control_node-2] [INFO] [1792626424.131991268] [controller_manager]: Controller 'joint_state_broadcaster' node arguments: --ros-args --params-file /home/ubuntu/waveshare_jazzy_ws/install/ros2_waveshare_bridge/share/ros2_waveshare_bridge/config/controllers.yaml 
+[spawner-3] [INFO] [1792626424.163725744] [spawner_joint_state_broadcaster]: Loaded joint_state_broadcaster
+[ros2_control_node-2] [INFO] [1792626424.164983271] [controller_manager]: Configuring controller: 'joint_state_broadcaster'
+[ros2_control_node-2] [INFO] [1792626424.165234643] [joint_state_broadcaster]: 'joints' or 'interfaces' parameter is empty. All available state interfaces will be published
+[ros2_control_node-2] [INFO] [1792626424.181271252] [controller_manager]: Activating controllers: [ joint_state_broadcaster ]
+[ros2_control_node-2] [INFO] [1792626424.199779230] [controller_manager]: Successfully switched controllers!
+[spawner-3] [INFO] [1792626424.222288568] [spawner_joint_state_broadcaster]: Configured and activated joint_state_broadcaster
+[ros2_control_node-2] [INFO] [1792626424.223890931] [controller_manager]: Loading controller : 'arm_controller' of type 'joint_trajectory_controller/JointTrajectoryController'
+[ros2_control_node-2] [INFO] [1792626424.223951339] [controller_manager]: Loading controller 'arm_controller'
+[ros2_control_node-2] [INFO] [1792626424.228220979] [controller_manager]: Controller 'arm_controller' node arguments: --ros-args --params-file /home/ubuntu/waveshare_jazzy_ws/install/ros2_waveshare_bridge/share/ros2_waveshare_bridge/config/controllers.yaml 
+[spawner-3] [INFO] [1792626424.261900041] [spawner_joint_state_broadcaster]: Loaded arm_controller
+[ros2_control_node-2] [INFO] [1792626424.262323193] [controller_manager]: Configuring controller: 'arm_controller'
+[ros2_control_node-2] [INFO] [1792626424.262819511] [arm_controller]: No specific joint names are used for command interfaces. Using 'joints' parameter.
+[ros2_control_node-2] [INFO] [1792626424.262924882] [arm_controller]: Command interfaces are [position] and state interfaces are [position velocity].
+[ros2_control_node-2] [INFO] [1792626424.263023457] [arm_controller]: Using 'splines' interpolation method.
+[ros2_control_node-2] [INFO] [1792626424.265705030] [arm_controller]: Action status changes will be monitored at 20.00 Hz.
+[ros2_control_node-2] [INFO] [1792626424.280659540] [controller_manager]: Activating controllers: [ arm_controller ]
+[ros2_control_node-2] [INFO] [1792626424.300156024] [controller_manager]: Successfully switched controllers!
+[spawner-3] [INFO] [1792626424.322436176] [spawner_joint_state_broadcaster]: Configured and activated arm_controller
+```
 ## launch the bridge
 
 ```
@@ -82,6 +140,8 @@ Summary: 2 packages finished [13.4s]
 
 ```
 
+
+
 ## Simple tests
 In another window
 
@@ -91,8 +151,8 @@ In another window
 ~/waveshare_jazzy_ws$ ros2 topic echo /feetech_state --once
 header:
   stamp:
-    sec: 1781129163
-    nanosec: 580917705
+    sec: 782673
+    nanosec: 561633814
   frame_id: ''
 comm_state: 0
 id:
@@ -119,31 +179,31 @@ hw_state:
 present_temperature:
 - 28
 - 28
+- 27
+- 29
 - 31
-- 30
-- 29
-- 29
+- 31
 present_input_voltage:
-- 123
-- 124
-- 122
-- 123
-- 124
-- 123
+- 121
+- 120
+- 120
+- 121
+- 121
+- 120
 present_current:
+- 7
+- 46
 - 0
-- 0
-- 0
-- 0
-- 0
-- 0
+- 13
+- 7
+- 7
 present_load:
-- 0
-- 0
-- 0
-- 0
-- 0
-- 0
+- -64
+- 112
+- -20
+- 76
+- -88
+- 56
 ---
 ~/waveshare_jazzy_ws$ ros2 topic echo /joint_states --once
 header:
