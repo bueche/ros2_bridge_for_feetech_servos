@@ -1,6 +1,6 @@
 // Transparent USB <-> Feetech servo bus bridge for the Waveshare ESP32 servo driver board.
 //
-// Host (Pi) link: Serial (USB via the board's CP2102), 1,000,000 baud.
+// Host (Pi) link: Serial (USB via the board's CP2102), 115200 baud.
 // Servo bus:      Serial1 on S_RXD/S_TXD, 1,000,000 baud, half duplex (MAX485_DE selects transmit).
 //
 // Host -> bus: each packet (FF FF ID LEN ..., LEN + 4 bytes) is forwarded as soon as its last
